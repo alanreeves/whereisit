@@ -5,12 +5,13 @@
  * Flow:
  *   1. Verify caller JWT → extract user_id
  *   2. Read openai_api_key from app_settings (service role)
- *   3. Read user preferred model from user_settings (default: gpt-5.6-luna)
+ *   3. Read user preferred model & cost rates from user_settings / user_model_rates
  *   4. Call GPT model → parse JSON action
  *   5. If STORE / MOVE: generate text-embedding-3-small vector
  *   6. Execute DB operation (items table) with user_id filter
  *   7. For SEARCH: call hybrid_search Postgres function
- *   8. Return { action, message, items?, item? }
+ *   8. Calculate request cost → log to api_usage_logs
+ *   9. Return { action, message, items?, item?, estimated_cost }
  *
  * Deploy:
  *   supabase functions deploy parse-intent
@@ -25,7 +26,18 @@ const DEFAULT_MODEL         = "gpt-5.6-luna";
 const EMBEDDING_MODEL       = "text-embedding-3-small";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type ActionType = "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "UNKNOWN";
+type ActionType = "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "LIST_CATEGORIES" | "UNKNOWN";
+
+// Default per-model rates (USD per 1,000 tokens) used when the user has not set custom rates.
+const DEFAULT_RATES: Record<string, { prompt: number; completion: number }> = {
+  "gpt-5.6-luna":        { prompt: 0.00015,  completion: 0.0006 },
+  "gpt-4o":              { prompt: 0.005,    completion: 0.015  },
+  "gpt-4o-mini":         { prompt: 0.00015,  completion: 0.0006 },
+  "gpt-4-turbo":         { prompt: 0.01,     completion: 0.03   },
+  "o1-mini":             { prompt: 0.003,    completion: 0.012  },
+  "o1-preview":          { prompt: 0.015,    completion: 0.060  },
+  "text-embedding-3-small": { prompt: 0.00002, completion: 0 },
+};
 
 interface ParsedAction {
   type:         ActionType;
@@ -190,9 +202,10 @@ Deno.serve(async (req: Request) => {
 
   // ── Read settings (reuse service client from auth above) ─────────────────
 
-  const [settingsRes, userSettingsRes] = await Promise.all([
+  const [settingsRes, userSettingsRes, ratesRes] = await Promise.all([
     svc.from("app_settings").select("openai_api_key").eq("id", 1).single(),
     svc.from("user_settings").select("openai_model").eq("user_id", userId).single(),
+    svc.from("user_model_rates").select("model, prompt_cost_per_1k, completion_cost_per_1k").eq("user_id", userId),
   ]);
 
   if (settingsRes.error || !settingsRes.data?.openai_api_key) {
@@ -202,6 +215,14 @@ Deno.serve(async (req: Request) => {
 
   const openaiKey = settingsRes.data.openai_api_key;
   const model     = userSettingsRes.data?.openai_model ?? DEFAULT_MODEL;
+
+  // Build a map of user-customised rates, falling back to DEFAULT_RATES
+  const userRatesMap = new Map<string, { prompt: number; completion: number }>();
+  for (const row of (ratesRes.data ?? [])) {
+    userRatesMap.set(row.model, { prompt: row.prompt_cost_per_1k, completion: row.completion_cost_per_1k });
+  }
+  const modelRates = userRatesMap.get(model) ?? DEFAULT_RATES[model] ?? { prompt: 0, completion: 0 };
+
   console.log(`[parse-intent] Model: ${model}, minMatchScore: ${minMatchScore ?? "none"}`);
 
   // ── Build GPT messages ─────────────────────────────────────────────────────
@@ -519,18 +540,40 @@ Deno.serve(async (req: Request) => {
   const elapsed = Date.now() - ts_start;
   console.log(`[parse-intent] Done in ${elapsed}ms. Message: "${responseMessage.slice(0, 80)}"`);
 
+  // ── Calculate cost and log usage ──────────────────────────────────────────
+  const rawUsage = (parsed as any)._usage;
+  const promptTokens     = rawUsage?.prompt_tokens     ?? 0;
+  const completionTokens = rawUsage?.completion_tokens ?? 0;
+  const totalTokens      = rawUsage?.total_tokens      ?? promptTokens + completionTokens;
+  const estimatedCost    =
+    (promptTokens     / 1000) * modelRates.prompt +
+    (completionTokens / 1000) * modelRates.completion;
+
+  // Fire-and-forget — do not await so it doesn't slow the response
+  svc.from("api_usage_logs").insert({
+    user_id:           userId,
+    model,
+    prompt_tokens:     promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens:      totalTokens,
+    cost:              estimatedCost,
+  }).then(({ error }) => {
+    if (error) console.warn("[parse-intent] Failed to log usage:", error.message);
+  });
+
   return jsonSuccess({
-    action:        parsed.type,
-    message:       responseMessage,
-    items:         responseItems.length ? responseItems : undefined,
-    item:          responseItem ?? undefined,
+    action:         parsed.type,
+    message:        responseMessage,
+    items:          responseItems.length ? responseItems : undefined,
+    item:           responseItem ?? undefined,
     needsCategory,
-    pendingState:  needsCategory
+    pendingState:   needsCategory
       ? { type: "PENDING_CATEGORY", item_name: parsed.item_name, location: parsed.location }
       : null,
     model,
-    elapsed_ms:    elapsed,
-    usage:         (parsed as any)._usage ?? undefined,
+    elapsed_ms:     elapsed,
+    usage:          rawUsage ?? undefined,
+    estimated_cost: estimatedCost,
   });
 });
 

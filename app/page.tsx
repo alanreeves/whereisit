@@ -77,6 +77,7 @@ interface ParseIntentResponse {
     completion_tokens?: number;
     total_tokens?:      number;
   };
+  estimated_cost?: number;
 }
 
 // ─── Available OpenAI models ──────────────────────────────────────────────────
@@ -505,6 +506,7 @@ export default function HomePage() {
   const [minMatchScore, setMinMatchScore] = useState<number>(0.5);  // 50% default
   const [showSettings,  setShowSettings]  = useState(false);
   const [showHelp,      setShowHelp]      = useState(false);
+  const [showCost,      setShowCost]      = useState(false);
   const [isOnline,      setIsOnline]      = useState(true);
   const [inputMode,     setInputMode]     = useState<InputMode>("voice");
   const [textInput,     setTextInput]     = useState("");
@@ -515,6 +517,7 @@ export default function HomePage() {
     elapsedMs?: number;
     tokens?: number;
     action?: string;
+    cost?: number;
   } | null>(null);
 
   // ── Refs ─────────────────────────────────────────────────────────────────
@@ -706,6 +709,7 @@ export default function HomePage() {
         elapsedMs: result.elapsed_ms,
         tokens:    result.usage?.total_tokens,
         action:    result.action,
+        cost:      result.estimated_cost,
       });
 
       // Update results list
@@ -761,6 +765,7 @@ export default function HomePage() {
         elapsedMs: result.elapsed_ms,
         tokens:    result.usage?.total_tokens,
         action:    result.action,
+        cost:      result.estimated_cost,
       });
 
       if (result.items?.length) {
@@ -899,6 +904,15 @@ export default function HomePage() {
             title="Voice Help Guide"
           >
             ❓
+          </button>
+          <button
+            id="cost-btn"
+            className="btn btn--ghost btn--icon"
+            onClick={() => setShowCost(true)}
+            aria-label="API Usage & Costs"
+            title="API Usage & Costs"
+          >
+            📊
           </button>
           <button
             id="settings-btn"
@@ -1166,8 +1180,11 @@ export default function HomePage() {
           🤖 AI Usage: {aiUsageStats ? (
             <>
               <strong>{aiUsageStats.model}</strong>
-              {aiUsageStats.action ? ` • Action: ${aiUsageStats.action}` : ""}
-              {aiUsageStats.tokens ? ` • ${aiUsageStats.tokens} tokens` : ""}
+              {aiUsageStats.action ? ` • ${aiUsageStats.action}` : ""}
+              {aiUsageStats.tokens ? ` • ${aiUsageStats.tokens.toLocaleString()} tokens` : ""}
+              {aiUsageStats.cost != null && aiUsageStats.cost > 0
+                ? ` • ~$${aiUsageStats.cost.toFixed(6)}`
+                : ""}
               {aiUsageStats.elapsedMs ? ` • ${aiUsageStats.elapsedMs}ms` : ""}
             </>
           ) : (
@@ -1196,6 +1213,223 @@ export default function HomePage() {
       {showHelp && (
         <HelpModal onClose={() => setShowHelp(false)} />
       )}
+
+      {/* ── Cost & Rates modal ── */}
+      {showCost && (
+        <CostModal userId={user.id} onClose={() => setShowCost(false)} />
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// COST & RATES MODAL
+// =============================================================================
+const MODEL_RATE_ROWS = [
+  { model: "gpt-5.6-luna",           label: "GPT-5.6 Luna (Default)",  prompt: 0.00015, completion: 0.0006  },
+  { model: "gpt-4o",                 label: "GPT-4o",                   prompt: 0.005,   completion: 0.015   },
+  { model: "gpt-4o-mini",            label: "GPT-4o Mini",              prompt: 0.00015, completion: 0.0006  },
+  { model: "gpt-4-turbo",            label: "GPT-4 Turbo",              prompt: 0.01,    completion: 0.03    },
+  { model: "o1-mini",                label: "o1 Mini",                  prompt: 0.003,   completion: 0.012   },
+  { model: "o1-preview",             label: "o1 Preview",               prompt: 0.015,   completion: 0.060   },
+  { model: "text-embedding-3-small", label: "Embedding 3 Small",        prompt: 0.00002, completion: 0       },
+];
+
+function CostModal({ userId, onClose }: { userId: string; onClose: () => void }) {
+  const supabase = getSupabaseClient();
+
+  // Accumulated usage stats
+  const [totalCost,     setTotalCost]     = useState<number | null>(null);
+  const [totalRequests, setTotalRequests] = useState<number | null>(null);
+  const [totalTokens,   setTotalTokens]   = useState<number | null>(null);
+  const [lastReset,     setLastReset]     = useState<string | null>(null);
+  const [loadingStats,  setLoadingStats]  = useState(true);
+  const [resetting,     setResetting]     = useState(false);
+
+  // Rates form state — keyed by model
+  const [rates, setRates] = useState<Record<string, { prompt: string; completion: string }>>(
+    Object.fromEntries(MODEL_RATE_ROWS.map(r => [r.model, {
+      prompt:     r.prompt.toString(),
+      completion: r.completion.toString(),
+    }]))
+  );
+  const [savingRates, setSavingRates] = useState(false);
+  const [savedRates,  setSavedRates]  = useState(false);
+
+  // Load current rates and accumulated stats
+  useEffect(() => {
+    (async () => {
+      setLoadingStats(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const [statsRes, ratesRes] = await Promise.all([
+        (supabase as any).from("api_usage_logs").select("cost, total_tokens, created_at").eq("user_id", userId),
+        (supabase as any).from("user_model_rates").select("model, prompt_cost_per_1k, completion_cost_per_1k").eq("user_id", userId),
+      ]);
+
+      if (statsRes.data?.length) {
+        const logs = statsRes.data as { cost: number; total_tokens: number; created_at: string }[];
+        setTotalCost(logs.reduce((s: number, r: { cost: number }) => s + (r.cost ?? 0), 0));
+        setTotalTokens(logs.reduce((s: number, r: { total_tokens: number }) => s + (r.total_tokens ?? 0), 0));
+        setTotalRequests(logs.length);
+        const oldest = logs.reduce((earliest: string, r: { created_at: string }) =>
+          !earliest || r.created_at < earliest ? r.created_at : earliest, "");
+        setLastReset(oldest);
+      } else {
+        setTotalCost(0); setTotalTokens(0); setTotalRequests(0); setLastReset(null);
+      }
+
+      if (ratesRes.data?.length) {
+        const updated = { ...rates };
+        for (const row of ratesRes.data as { model: string; prompt_cost_per_1k: number; completion_cost_per_1k: number }[]) {
+          if (updated[row.model]) {
+            updated[row.model] = { prompt: row.prompt_cost_per_1k.toString(), completion: row.completion_cost_per_1k.toString() };
+          }
+        }
+        setRates(updated);
+      }
+      setLoadingStats(false);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  async function handleReset() {
+    if (!confirm("Reset all accumulated cost data? This cannot be undone.")) return;
+    setResetting(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).rpc("reset_user_cost", { p_user_id: userId });
+    setTotalCost(0); setTotalTokens(0); setTotalRequests(0); setLastReset(null);
+    setResetting(false);
+  }
+
+  async function handleSaveRates() {
+    setSavingRates(true);
+    const rows = MODEL_RATE_ROWS.map(r => ({
+      user_id:                userId,
+      model:                  r.model,
+      prompt_cost_per_1k:     parseFloat(rates[r.model]?.prompt  ?? "0") || 0,
+      completion_cost_per_1k: parseFloat(rates[r.model]?.completion ?? "0") || 0,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("user_model_rates").upsert(rows, { onConflict: "user_id,model" });
+    setSavingRates(false);
+    setSavedRates(true);
+    setTimeout(() => setSavedRates(false), 2500);
+  }
+
+  const fmtUSD = (n: number | null) =>
+    n == null ? "—" : n < 0.000001 ? "< $0.000001" : `$${n.toFixed(6)}`;
+
+  const cellStyle: React.CSSProperties = {
+    padding: "0.35rem 0.5rem",
+    fontSize: "0.75rem",
+    border: "1px solid rgba(255,255,255,0.1)",
+    background: "rgba(255,255,255,0.03)",
+  };
+  const inputStyle: React.CSSProperties = {
+    width: "90px",
+    background: "rgba(255,255,255,0.07)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: "4px",
+    color: "var(--clr-text-1)",
+    padding: "0.2rem 0.4rem",
+    fontSize: "0.75rem",
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="glass-strong modal-sheet" style={{ position: "relative", maxHeight: "85vh", overflowY: "auto", minWidth: 320 }}>
+        <h2 className="modal-title">📊 API Usage &amp; Costs</h2>
+
+        {/* ── Accumulated Stats ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem", marginBottom: "1rem" }}>
+          {([
+            { label: "Total Spent",    value: fmtUSD(totalCost) },
+            { label: "Requests",       value: totalRequests == null ? "—" : totalRequests.toLocaleString() },
+            { label: "Total Tokens",   value: totalTokens   == null ? "—" : totalTokens.toLocaleString() },
+          ] as const).map(({ label, value }) => (
+            <div key={label} style={{ background: "rgba(255,255,255,0.05)", borderRadius: "0.5rem", padding: "0.6rem", textAlign: "center" }}>
+              <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)", marginBottom: "0.2rem" }}>{label}</div>
+              <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--clr-primary)" }}>
+                {loadingStats ? <span className="spinner" /> : value}
+              </div>
+            </div>
+          ))}
+        </div>
+        {lastReset && (
+          <p style={{ fontSize: "0.7rem", color: "var(--clr-text-3)", marginBottom: "0.75rem", textAlign: "center" }}>
+            Tracking since {new Date(lastReset).toLocaleDateString()}
+          </p>
+        )}
+        <button
+          id="cost-reset-btn"
+          className="btn btn--ghost"
+          style={{ width: "100%", marginBottom: "1.25rem", color: "#ef4444" }}
+          onClick={handleReset}
+          disabled={resetting || loadingStats}
+        >
+          {resetting ? <span className="spinner" /> : null}
+          🗑 Reset Accumulated Cost
+        </button>
+
+        <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.08)", marginBottom: "1rem" }} />
+
+        {/* ── Model Rates Table ── */}
+        <h3 style={{ fontSize: "0.9rem", color: "var(--clr-text-1)", marginBottom: "0.5rem" }}>
+          💰 Model Cost Rates <span style={{ fontSize: "0.7rem", color: "var(--clr-text-3)" }}>(USD per 1,000 tokens)</span>
+        </h3>
+        <div style={{ overflowX: "auto", marginBottom: "1rem" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ ...cellStyle, textAlign: "left", color: "var(--clr-text-2)" }}>Model</th>
+                <th style={{ ...cellStyle, textAlign: "right", color: "var(--clr-text-2)" }}>Input $/1k</th>
+                <th style={{ ...cellStyle, textAlign: "right", color: "var(--clr-text-2)" }}>Output $/1k</th>
+              </tr>
+            </thead>
+            <tbody>
+              {MODEL_RATE_ROWS.map(row => (
+                <tr key={row.model}>
+                  <td style={{ ...cellStyle, color: "var(--clr-text-1)" }}>{row.label}</td>
+                  <td style={{ ...cellStyle, textAlign: "right" }}>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      style={inputStyle}
+                      value={rates[row.model]?.prompt ?? ""}
+                      onChange={e => setRates(r => ({ ...r, [row.model]: { ...r[row.model], prompt: e.target.value } }))}
+                    />
+                  </td>
+                  <td style={{ ...cellStyle, textAlign: "right" }}>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      style={inputStyle}
+                      value={rates[row.model]?.completion ?? ""}
+                      onChange={e => setRates(r => ({ ...r, [row.model]: { ...r[row.model], completion: e.target.value } }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <button className="btn btn--ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
+          <button
+            id="rates-save-btn"
+            className="btn btn--primary"
+            style={{ flex: 2 }}
+            onClick={handleSaveRates}
+            disabled={savingRates}
+          >
+            {savingRates ? <span className="spinner" /> : null}
+            {savedRates ? "✓ Saved!" : savingRates ? "Saving…" : "Save Rates"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
