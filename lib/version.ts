@@ -12,13 +12,12 @@
  * Bump this string whenever you ship a new release so that the Service
  * Worker automatically invalidates old caches on the next activation cycle.
  *
- * Semantic versioning (MAJOR.MINOR.PATCH) is recommended:
- *   MAJOR - breaking API / schema changes
- *   MINOR - new features, backwards compatible
- *   PATCH - bug-fixes, styling tweaks
+ * Semantic versioning convention for this project:
+ *   - Increment the third number (PATCH, e.g. 1.6.1) on every change/fix.
+ *   - Increment MAJOR/MINOR only when significant major features are added.
  */
 
-export const APP_VERSION = "1.6.0" as const;
+export const APP_VERSION = "1.6.1" as const;
 
 /**
  * The full cache-key prefix used by the Service Worker.
