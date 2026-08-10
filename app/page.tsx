@@ -34,6 +34,7 @@ type ActionType =
   | "MOVE"
   | "REMOVE"
   | "PROVIDE_CATEGORY"
+  | "LIST_CATEGORIES"
   | "UNKNOWN";
 
 interface Message {
@@ -438,6 +439,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
               <li>&quot;<strong>Find all items</strong>&quot;</li>
               <li>&quot;<strong>Find all items in category Documents</strong>&quot;</li>
               <li>&quot;<strong>Find all items in category Documents subcategory Personal</strong>&quot;</li>
+              <li>&quot;<strong>List all categories</strong>&quot;</li>
             </ul>
           </div>
 

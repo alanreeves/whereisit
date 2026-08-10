@@ -57,15 +57,16 @@ Return ONLY a single valid JSON object — no markdown, no explanation, no backt
 
 ACTIONS you must classify:
   STORE           — user is recording that they put/placed/stored/left/put away an item somewhere
-  SEARCH          — user is looking for, asking about, or wanting to find an item
+  SEARCH          — user is looking for, asking about, or wanting to find an item or list items
   MOVE            — user is recording that an item has moved from one place to another
   REMOVE          — user wants to delete an item record (thrown away, lost, sold, etc.)
   PROVIDE_CATEGORY — user is answering a follow-up question about what category/subcategory an item belongs to
+  LIST_CATEGORIES — user wants to see or list all available categories and subcategories in their inventory
   UNKNOWN         — the phrase does not match any of the above
 
 OUTPUT JSON SCHEMA (always include every key):
 {
-  "type": "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "UNKNOWN",
+  "type": "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "LIST_CATEGORIES" | "UNKNOWN",
   "item_name":    string | null,   // the object being tracked, lowercase singular e.g. "passport", "spare key"
   "category":     string | null,   // broad group e.g. "Documents", "Tools", "Clothing", null if not mentioned
   "subcategory":  string | null,   // narrower group e.g. "Personal", "Power Tools", null if not mentioned
@@ -85,7 +86,9 @@ CRITICAL RULES:
 6. item_name: always lowercase, singular noun, strip articles ("the", "my", "a").
 7. location: infer a sensible hierarchy when possible. "in the desk" → "Desk". "kitchen top drawer" → "Kitchen > Drawer > Top".
 8. If category/subcategory are not mentioned, return null — do NOT guess them.
-9. NEVER return anything outside the JSON object.
+9. For "find all items" or "list all items", set type="SEARCH", item_name="all", and extract category/subcategory if specified. E.g. "find all items in category household" → type="SEARCH", item_name="all", category="household".
+10. For "list all categories", "show categories", "what categories do I have", set type="LIST_CATEGORIES".
+11. NEVER return anything outside the JSON object.
 
 FEW-SHOT EXAMPLES (learn from these):
 
@@ -115,6 +118,15 @@ User: "Find all items in category Documents"
 
 User: "Find all items in category Documents subcategory Personal"
 → {"type":"SEARCH","item_name":"all","category":"Documents","subcategory":"Personal","location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "List all categories"
+→ {"type":"LIST_CATEGORIES","item_name":null,"category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "What categories do I have?"
+→ {"type":"LIST_CATEGORIES","item_name":null,"category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "Show categories"
+→ {"type":"LIST_CATEGORIES","item_name":null,"category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.98}
 
 User: "Have you seen my glasses?"
 → {"type":"SEARCH","item_name":"glasses","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.98}
@@ -245,10 +257,21 @@ Deno.serve(async (req: Request) => {
 
   // ── Determine if this is an "all items" / list query ─────────────────────
   const rawName = parsed.item_name?.trim().toLowerCase() ?? "";
-  const isAllQuery = parsed.type === "SEARCH" && (!rawName ||
-    ["all", "all items", "everything", "*", "items", "all of my items", "all items in category", "list items"].includes(rawName) ||
+  const rawTranscript = transcript.trim().toLowerCase();
+
+  const isAllQuery = (parsed.type === "SEARCH" || parsed.type === "UNKNOWN") && (
+    !rawName ||
+    ["all", "all items", "everything", "*", "items", "all of my items", "all items in category", "list items", "find all items"].includes(rawName) ||
     rawName.startsWith("all items") ||
-    rawName.startsWith("everything"));
+    rawName.startsWith("everything") ||
+    rawTranscript.includes("find all items") ||
+    rawTranscript.includes("list all items") ||
+    rawTranscript.includes("show all items")
+  );
+
+  if (isAllQuery) {
+    parsed.type = "SEARCH";
+  }
 
   // ── Generate embedding (STORE, MOVE, SEARCH) ──────────────────────────────
   let embedding: number[] | null = null;
@@ -451,6 +474,40 @@ Deno.serve(async (req: Request) => {
       } else {
         responseItem    = removed;
         responseMessage = `Removed! "${removed.name}" has been deleted from your inventory.`;
+      }
+      break;
+    }
+
+    // ── LIST_CATEGORIES ────────────────────────────────────────────────────
+    case "LIST_CATEGORIES": {
+      const { data: catRows, error: catErr } = await svc
+        .from("items")
+        .select("category, subcategory")
+        .eq("user_id", userId);
+
+      if (catErr) {
+        console.error("[parse-intent] List categories error:", catErr.message);
+        responseMessage = "I ran into a problem loading categories. Please try again.";
+      } else if (!catRows || catRows.length === 0) {
+        responseMessage = "You don't have any categorized items in your inventory yet.";
+      } else {
+        const catMap = new Map<string, Set<string>>();
+        for (const row of catRows) {
+          const c = row.category?.trim() || "Uncategorized";
+          if (!catMap.has(c)) catMap.set(c, new Set());
+          if (row.subcategory?.trim()) catMap.get(c)!.add(row.subcategory.trim());
+        }
+
+        const catSummaries: string[] = [];
+        catMap.forEach((subs, cat) => {
+          if (subs.size > 0) {
+            catSummaries.push(`${cat} (${Array.from(subs).join(", ")})`);
+          } else {
+            catSummaries.push(cat);
+          }
+        });
+
+        responseMessage = `You have ${catMap.size} category${catMap.size === 1 ? "" : "ies"}:\n• ${catSummaries.join("\n• ")}`;
       }
       break;
     }
