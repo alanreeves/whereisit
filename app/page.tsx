@@ -144,7 +144,7 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
     // ── Sign-up: check whitelist first ────────────────────────────────────────
     if (mode === "signup") {
       logger.info("AUTH", "Checking whitelist", { email });
-      const { data: allowed, error: wlErr } = await supabase
+      const { data: allowed, error: wlErr } = await (supabase as any)
         .rpc("check_whitelist", { p_email: email.trim().toLowerCase() });
 
       if (wlErr) {
