@@ -12,7 +12,7 @@
  *   - Sidebar (log) + main panel (mic + results) on md+
  */
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, Fragment } from "react";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { logger } from "@/lib/logger";
 import { VERSION_LABEL } from "@/lib/version";
@@ -35,6 +35,7 @@ type ActionType =
   | "REMOVE"
   | "PROVIDE_CATEGORY"
   | "LIST_CATEGORIES"
+  | "SHOW_INVENTORY"
   | "UNKNOWN";
 
 interface Message {
@@ -510,6 +511,8 @@ export default function HomePage() {
   const [showSettings,  setShowSettings]  = useState(false);
   const [showHelp,      setShowHelp]      = useState(false);
   const [showCost,      setShowCost]      = useState(false);
+  const [showInventory, setShowInventory] = useState(false);
+  const [inventoryItems, setInventoryItems] = useState<ItemResult[]>([]);
   const [isOnline,      setIsOnline]      = useState(true);
   const [inputMode,     setInputMode]     = useState<InputMode>("voice");
   const [textInput,     setTextInput]     = useState("");
@@ -716,6 +719,10 @@ export default function HomePage() {
       });
 
       // Update results list
+      if (result.action === "SHOW_INVENTORY") {
+        setShowInventory(true);
+        if (result.items?.length) setInventoryItems(result.items);
+      }
       if (result.items?.length) {
         setResults(result.items);
       } else if (result.item) {
@@ -771,6 +778,10 @@ export default function HomePage() {
         cost:      result.estimated_cost,
       });
 
+      if (result.action === "SHOW_INVENTORY") {
+        setShowInventory(true);
+        if (result.items?.length) setInventoryItems(result.items);
+      }
       if (result.items?.length) {
         setResults(result.items);
       } else if (result.item) {
@@ -916,6 +927,15 @@ export default function HomePage() {
             title="API Usage & Costs"
           >
             📊
+          </button>
+          <button
+            id="inventory-btn"
+            className="btn btn--ghost btn--icon"
+            onClick={() => setShowInventory(true)}
+            aria-label="Show Inventory Table"
+            title="Show Inventory Table"
+          >
+            📦
           </button>
           <button
             id="settings-btn"
@@ -1221,6 +1241,19 @@ export default function HomePage() {
       {showCost && (
         <CostModal userId={user.id} onClose={() => setShowCost(false)} />
       )}
+
+      {/* ── Inventory modal ── */}
+      {showInventory && (
+        <InventoryModal
+          userId={user.id}
+          initialItems={inventoryItems}
+          onClose={() => setShowInventory(false)}
+          onItemsUpdated={(updated) => {
+            setInventoryItems(updated);
+            setResults(updated.slice(0, 10));
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1436,6 +1469,397 @@ function CostModal({ userId, onClose }: { userId: string; onClose: () => void })
             {savedRates ? "✓ Saved!" : savingRates ? "Saving…" : "Save Rates"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// INVENTORY MODAL (Category & Subcategory Table with Pencil Edit)
+// =============================================================================
+function InventoryModal({
+  userId,
+  initialItems,
+  onClose,
+  onItemsUpdated,
+}: {
+  userId: string;
+  initialItems?: ItemResult[];
+  onClose: () => void;
+  onItemsUpdated?: (items: ItemResult[]) => void;
+}) {
+  const supabase = getSupabaseClient();
+  const [items, setItems]         = useState<ItemResult[]>(initialItems ?? []);
+  const [loading, setLoading]     = useState<boolean>(!initialItems?.length);
+  const [filterText, setFilterText] = useState("");
+  const [editingItem, setEditingItem] = useState<ItemResult | null>(null);
+
+  const fetchItems = useCallback(async () => {
+    setLoading(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from("items")
+      .select()
+      .eq("user_id", userId)
+      .order("category", { ascending: true })
+      .order("subcategory", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (!error && data) {
+      setItems(data as ItemResult[]);
+      onItemsUpdated?.(data as ItemResult[]);
+    }
+    setLoading(false);
+  }, [supabase, userId, onItemsUpdated]);
+
+  useEffect(() => {
+    if (!initialItems?.length) {
+      fetchItems();
+    }
+  }, [initialItems, fetchItems]);
+
+  const filteredItems = items.filter(item => {
+    if (!filterText.trim()) return true;
+    const q = filterText.toLowerCase();
+    return (
+      item.name.toLowerCase().includes(q) ||
+      (item.category && item.category.toLowerCase().includes(q)) ||
+      (item.subcategory && item.subcategory.toLowerCase().includes(q)) ||
+      item.location.toLowerCase().includes(q) ||
+      (item.notes && item.notes.toLowerCase().includes(q))
+    );
+  });
+
+  // Group filtered items by Category → Subcategory
+  const grouped = useMemo(() => {
+    const map = new Map<string, Map<string, ItemResult[]>>();
+    for (const item of filteredItems) {
+      const cat = item.category?.trim() || "Uncategorized";
+      const sub = item.subcategory?.trim() || "General";
+      if (!map.has(cat)) map.set(cat, new Map());
+      const subMap = map.get(cat)!;
+      if (!subMap.has(sub)) subMap.set(sub, []);
+      subMap.get(sub)!.push(item);
+    }
+    return map;
+  }, [filteredItems]);
+
+  const cellStyle: React.CSSProperties = {
+    padding: "0.45rem 0.6rem",
+    fontSize: "0.8rem",
+    borderBottom: "1px solid rgba(255,255,255,0.06)",
+    color: "var(--clr-text-1)",
+    verticalAlign: "middle",
+  };
+
+  const headerStyle: React.CSSProperties = {
+    ...cellStyle,
+    fontWeight: 600,
+    color: "var(--clr-text-2)",
+    background: "rgba(255,255,255,0.04)",
+    fontSize: "0.75rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div
+        className="glass-strong modal-sheet"
+        style={{
+          position: "relative",
+          maxWidth: "920px",
+          width: "95%",
+          maxHeight: "88vh",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.75rem",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 className="modal-title" style={{ margin: 0 }}>
+            📦 Inventory ({items.length} {items.length === 1 ? "item" : "items"})
+          </h2>
+          <button className="btn btn--ghost btn--icon" onClick={onClose} aria-label="Close">✖</button>
+        </div>
+
+        {/* Filter input */}
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="text"
+            placeholder="🔎 Search inventory by name, location, category..."
+            value={filterText}
+            onChange={e => setFilterText(e.target.value)}
+            style={{
+              flex: 1,
+              background: "rgba(255,255,255,0.07)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: "6px",
+              color: "var(--clr-text-1)",
+              padding: "0.4rem 0.75rem",
+              fontSize: "0.85rem",
+            }}
+          />
+          <button className="btn btn--ghost" onClick={fetchItems} disabled={loading} title="Refresh inventory">
+            {loading ? <span className="spinner" /> : "🔄"}
+          </button>
+        </div>
+
+        {/* Table Container */}
+        <div style={{ flex: 1, overflowY: "auto", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px" }}>
+          {loading ? (
+            <div style={{ padding: "2rem", textAlign: "center", color: "var(--clr-text-3)" }}>
+              <span className="spinner" /> Loading inventory...
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div style={{ padding: "2rem", textAlign: "center", color: "var(--clr-text-3)" }}>
+              {filterText ? "No matching items found." : "Inventory is currently empty."}
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...headerStyle, width: "25%" }}>Item Name</th>
+                  <th style={{ ...headerStyle, width: "20%" }}>Category</th>
+                  <th style={{ ...headerStyle, width: "18%" }}>Subcategory</th>
+                  <th style={{ ...headerStyle, width: "22%" }}>Location</th>
+                  <th style={{ ...headerStyle, width: "15%", textAlign: "center" }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from(grouped.entries()).map(([cat, subMap]: [string, Map<string, ItemResult[]>]) => (
+                  <Fragment key={cat}>
+                    {/* Category Header Row */}
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{
+                          padding: "0.4rem 0.6rem",
+                          background: "rgba(99, 102, 241, 0.15)",
+                          color: "var(--clr-primary)",
+                          fontWeight: 700,
+                          fontSize: "0.85rem",
+                          borderBottom: "1px solid rgba(255,255,255,0.1)",
+                        }}
+                      >
+                        {categoryEmoji(cat)} {cat}
+                      </td>
+                    </tr>
+                    {Array.from(subMap.entries()).map(([sub, subItems]: [string, ItemResult[]]) => (
+                      <Fragment key={`${cat}-${sub}`}>
+                        {subItems.map((item: ItemResult) => (
+                          <tr key={item.id} style={{ transition: "background 0.15s" }}>
+                            <td style={{ ...cellStyle, fontWeight: 500 }}>{item.name}</td>
+                            <td style={{ ...cellStyle, color: "var(--clr-text-2)" }}>{item.category || "—"}</td>
+                            <td style={{ ...cellStyle, color: "var(--clr-text-2)" }}>{item.subcategory || "—"}</td>
+                            <td style={{ ...cellStyle, color: "var(--clr-text-1)" }}>📍 {item.location}</td>
+                            <td style={{ ...cellStyle, textAlign: "center" }}>
+                              <button
+                                id={`edit-item-btn-${item.id}`}
+                                className="btn btn--ghost btn--icon"
+                                onClick={() => setEditingItem(item)}
+                                title={`Edit ${item.name}`}
+                                style={{ padding: "0.2rem 0.4rem", fontSize: "0.85rem" }}
+                              >
+                                ✏️
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button className="btn btn--ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+
+      {/* Edit Item Modal */}
+      {editingItem && (
+        <EditItemModal
+          userId={userId}
+          item={editingItem}
+          onClose={() => setEditingItem(null)}
+          onSaved={(updated) => {
+            setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
+            setEditingItem(null);
+            onItemsUpdated?.(items.map(i => i.id === updated.id ? updated : i));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// EDIT ITEM MODAL
+// =============================================================================
+function EditItemModal({
+  userId,
+  item,
+  onClose,
+  onSaved,
+}: {
+  userId: string;
+  item: ItemResult;
+  onClose: () => void;
+  onSaved: (updatedItem: ItemResult) => void;
+}) {
+  const supabase = getSupabaseClient();
+  const [name, setName]               = useState(item.name);
+  const [category, setCategory]       = useState(item.category ?? "");
+  const [subcategory, setSubcategory] = useState(item.subcategory ?? "");
+  const [location, setLocation]       = useState(item.location);
+  const [notes, setNotes]             = useState(item.notes ?? "");
+  const [saving, setSaving]           = useState(false);
+  const [errorMsg, setErrorMsg]       = useState<string | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !location.trim()) {
+      setErrorMsg("Item name and location are required.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg(null);
+
+    const updatedPayload = {
+      name:        name.trim(),
+      category:    category.trim() || null,
+      subcategory: subcategory.trim() || null,
+      location:    location.trim(),
+      notes:       notes.trim() || null,
+      updated_at:  new Date().toISOString(),
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from("items")
+      .update(updatedPayload)
+      .eq("id", item.id)
+      .eq("user_id", userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Edit item failed:", error.message);
+      setErrorMsg("Failed to save changes. Please try again.");
+      setSaving(false);
+    } else {
+      onSaved(data as ItemResult);
+    }
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    color: "var(--clr-text-2)",
+    marginBottom: "0.2rem",
+    display: "block",
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    background: "rgba(255,255,255,0.07)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: "6px",
+    color: "var(--clr-text-1)",
+    padding: "0.4rem 0.6rem",
+    fontSize: "0.85rem",
+  };
+
+  return (
+    <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="glass-strong modal-sheet" style={{ maxWidth: "480px", width: "90%", position: "relative" }}>
+        <h2 className="modal-title">✏️ Edit Item</h2>
+
+        {errorMsg && (
+          <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: "0.75rem" }}>
+            ⚠️ {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSave} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          <div>
+            <label style={labelStyle}>Item Name *</label>
+            <input
+              type="text"
+              style={inputStyle}
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+            <div>
+              <label style={labelStyle}>Category</label>
+              <input
+                type="text"
+                style={inputStyle}
+                placeholder="e.g. Tools, Documents"
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Subcategory</label>
+              <input
+                type="text"
+                style={inputStyle}
+                placeholder="e.g. Hand Tools, Personal"
+                value={subcategory}
+                onChange={e => setSubcategory(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Location *</label>
+            <input
+              type="text"
+              style={inputStyle}
+              placeholder="e.g. Workshop drawer #2"
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <textarea
+              style={{ ...inputStyle, minHeight: "60px", resize: "vertical" }}
+              placeholder="Optional notes or details..."
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <button type="button" className="btn btn--ghost" style={{ flex: 1 }} onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              id="save-item-btn"
+              type="submit"
+              className="btn btn--primary"
+              style={{ flex: 2 }}
+              disabled={saving}
+            >
+              {saving ? <span className="spinner" /> : "Save Changes"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

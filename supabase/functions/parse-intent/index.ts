@@ -26,7 +26,7 @@ const DEFAULT_MODEL         = "gpt-5.4-nano";
 const EMBEDDING_MODEL       = "text-embedding-3-small";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type ActionType = "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "LIST_CATEGORIES" | "UNKNOWN";
+type ActionType = "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "LIST_CATEGORIES" | "SHOW_INVENTORY" | "UNKNOWN";
 
 // Default per-model rates (USD per 1,000 tokens) — prices from OpenAI pricing page.
 // Per-1M prices divided by 1,000. Default model: gpt-5.4-nano.
@@ -203,6 +203,45 @@ Deno.serve(async (req: Request) => {
   }
   const { transcript, pendingState, customPrompt, minMatchScore } = body;
   if (!transcript?.trim()) return jsonError("transcript is required", 400);
+
+  // ── Short-circuit: "show inventory" bypass GPT entirely ─────────────────
+  const lcTranscript = transcript.trim().toLowerCase();
+  const isShowInventory =
+    lcTranscript === "show inventory" ||
+    lcTranscript === "show my inventory" ||
+    lcTranscript === "show all inventory" ||
+    lcTranscript === "inventory" ||
+    lcTranscript === "list inventory" ||
+    lcTranscript === "display inventory";
+
+  if (isShowInventory) {
+    const svcForInv = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+    const { data: allItems, error: invErr } = await svcForInv
+      .from("items")
+      .select()
+      .eq("user_id", userId)
+      .order("category", { ascending: true })
+      .order("subcategory", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (invErr) {
+      console.error("[parse-intent] Show inventory fetch error:", invErr.message);
+      return jsonError("Failed to load inventory", 500);
+    }
+    const count = allItems?.length ?? 0;
+    return jsonSuccess({
+      action:         "SHOW_INVENTORY" as ActionType,
+      message:        count === 0 ? "Your inventory is empty." : `Showing all ${count} item${count === 1 ? "" : "s"} in your inventory.`,
+      items:          allItems ?? [],
+      item:           undefined,
+      needsCategory:  false,
+      pendingState:   null,
+      model:          "(none)",
+      elapsed_ms:     0,
+      usage:          undefined,
+      estimated_cost: 0,
+    });
+  }
 
   // ── Read settings (reuse service client from auth above) ─────────────────
 
@@ -499,6 +538,29 @@ Deno.serve(async (req: Request) => {
       } else {
         responseItem    = removed;
         responseMessage = `Removed! "${removed.name}" has been deleted from your inventory.`;
+      }
+      break;
+    }
+
+    // ── SHOW_INVENTORY ──────────────────────────────────────────────────────
+    // (handled above as short-circuit — should not reach here normally)
+    case "SHOW_INVENTORY": {
+      const { data: allItems, error: invErr } = await svc
+        .from("items")
+        .select()
+        .eq("user_id", userId)
+        .order("category", { ascending: true })
+        .order("subcategory", { ascending: true })
+        .order("name",     { ascending: true });
+
+      if (invErr) {
+        responseMessage = "I ran into a problem loading your inventory. Please try again.";
+      } else {
+        responseItems   = allItems ?? [];
+        const count     = responseItems.length;
+        responseMessage = count === 0
+          ? "Your inventory is empty."
+          : `Showing all ${count} item${count === 1 ? "" : "s"} in your inventory.`;
       }
       break;
     }
