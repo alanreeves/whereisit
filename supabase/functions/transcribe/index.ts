@@ -1,4 +1,4 @@
-﻿/**
+/**
  * supabase/functions/transcribe/index.ts
  * Supabase Edge Function — Deepgram Speech-to-Text
  *
@@ -47,24 +47,26 @@ Deno.serve(async (req: Request) => {
     return jsonError("Method not allowed", 405);
   }
 
-  // ── Verify caller JWT ──────────────────────────────────────────────────────
+  // ── Verify caller JWT using service role client ───────────────────────────
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return jsonError("Missing or invalid Authorization header", 401);
   }
 
-  const userClient = createClient(SUPABASE_URL, authHeader.replace("Bearer ", ""), {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data: { user }, error: authError } = await userClient.auth.getUser();
+  const jwt = authHeader.replace("Bearer ", "");
+
+  // Use service role client to verify the JWT — this is the correct Edge Function pattern.
+  // DO NOT create a client using the JWT as the API key (that causes "Invalid API key").
+  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+  const { data: { user }, error: authError } = await serviceClient.auth.getUser(jwt);
   if (authError || !user) {
     console.error("[transcribe] Auth failed:", authError?.message);
     return jsonError("Unauthorized", 401);
   }
   console.log(`[transcribe] Authenticated user: ${user.id}`);
 
-  // ── Read Deepgram key from app_settings (service role) ───────────────────
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+
+  // ── Read Deepgram key from app_settings (reuse service client) ───────────
   const { data: settings, error: settingsError } = await serviceClient
     .from("app_settings")
     .select("deepgram_api_key")

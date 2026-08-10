@@ -1,4 +1,4 @@
-﻿/**
+/**
  * supabase/functions/parse-intent/index.ts
  * Supabase Edge Function — OpenAI Intent Parsing + DB Action
  *
@@ -95,11 +95,11 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return jsonError("Unauthorized", 401);
 
-  const userJwt   = authHeader.replace("Bearer ", "");
-  const userClient = createClient(SUPABASE_URL, userJwt, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data: { user }, error: authErr } = await userClient.auth.getUser();
+  const userJwt    = authHeader.replace("Bearer ", "");
+  // Use service role client to verify JWT — correct Edge Function auth pattern.
+  // DO NOT pass the JWT as the API key to createClient().
+  const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+  const { data: { user }, error: authErr } = await svc.auth.getUser(userJwt);
   if (authErr || !user) return jsonError("Unauthorized", 401);
 
   const userId = user.id;
@@ -115,8 +115,7 @@ Deno.serve(async (req: Request) => {
   const { transcript, pendingState } = body;
   if (!transcript?.trim()) return jsonError("transcript is required", 400);
 
-  // ── Read settings (service role) ───────────────────────────────────────────
-  const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+  // ── Read settings (reuse service client from auth above) ─────────────────
 
   const [settingsRes, userSettingsRes] = await Promise.all([
     svc.from("app_settings").select("openai_api_key").eq("id", 1).single(),
