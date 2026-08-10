@@ -141,6 +141,30 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
     setError(null);
     logger.info("AUTH", `Attempting ${mode}`, { email });
 
+    // ── Sign-up: check whitelist first ────────────────────────────────────────
+    if (mode === "signup") {
+      logger.info("AUTH", "Checking whitelist", { email });
+      const { data: allowed, error: wlErr } = await supabase
+        .rpc("check_whitelist", { p_email: email.trim().toLowerCase() });
+
+      if (wlErr) {
+        logger.warn("AUTH", "Whitelist check error", wlErr.message);
+        setError("Unable to verify your account. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      if (!allowed) {
+        logger.warn("AUTH", "Sign-up rejected — email not in whitelist", { email });
+        setError("This email address is not authorised to create an account. Please contact the administrator.");
+        setLoading(false);
+        return;
+      }
+
+      logger.info("AUTH", "Whitelist check passed", { email });
+    }
+
+    // ── Proceed with Supabase auth ────────────────────────────────────────────
     const { data, error: authErr } = mode === "signin"
       ? await supabase.auth.signInWithPassword({ email, password })
       : await supabase.auth.signUp({ email, password });
@@ -152,6 +176,7 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
       logger.info("AUTH", "Auth success", { userId: data.session.user.id });
       onAuth(data.session);
     } else {
+      // signUp without email confirmation returns no session
       setError("Check your email to confirm your account.");
     }
     setLoading(false);
@@ -162,7 +187,9 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
       <div className="glass-strong auth-card">
         <div style={{ textAlign: "center", fontSize: "3rem", marginBottom: "0.5rem" }}>🔍</div>
         <h1 className="auth-title">Where Is It?</h1>
-        <p className="auth-subtitle">Your voice-first inventory tracker</p>
+        <p className="auth-subtitle">
+          {mode === "signin" ? "Your voice-first inventory tracker" : "Create your account"}
+        </p>
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -193,6 +220,17 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
             />
           </div>
 
+          {mode === "signup" && (
+            <p style={{
+              fontSize: "var(--text-xs)",
+              color:    "var(--clr-text-3)",
+              marginBottom: "0.75rem",
+              textAlign: "center",
+            }}>
+              🔒 Account creation is by invitation only
+            </p>
+          )}
+
           {error && (
             <div className="toast toast--error" style={{ marginBottom: "1rem", borderRadius: "0.5rem" }}>
               {error}
@@ -206,7 +244,10 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
             disabled={loading}
           >
             {loading ? <span className="spinner" /> : null}
-            {loading ? "Please wait…" : mode === "signin" ? "Sign In" : "Create Account"}
+            {loading
+              ? (mode === "signup" ? "Checking authorisation…" : "Signing in…")
+              : mode === "signin" ? "Sign In" : "Create Account"
+            }
           </button>
         </form>
 
