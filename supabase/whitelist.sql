@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- Where Is It? — Email Whitelist
 -- =============================================================================
 -- Run this in: Supabase Dashboard → SQL Editor → New Query → Run
@@ -12,14 +12,15 @@
 -- ─── Whitelist table ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.whitelist (
   id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  email      text        NOT NULL,
+  email      text        NOT NULL UNIQUE,
   full_name  text,
   notes      text,
   is_active  boolean     NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now(),
-
-  CONSTRAINT whitelist_email_unique UNIQUE (lower(email))
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Case-insensitive unique index for email
+CREATE UNIQUE INDEX IF NOT EXISTS whitelist_email_lower_idx ON public.whitelist (lower(email));
 
 -- RLS on, no policies — invisible to all browser clients.
 -- Managed exclusively via the Supabase SQL Editor (you).
