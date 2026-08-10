@@ -171,8 +171,10 @@ Deno.serve(async (req: Request) => {
 
     const chatJson = await chatRes.json();
     const raw      = chatJson.choices?.[0]?.message?.content ?? "{}";
+    const usage    = chatJson.usage ?? null;
     console.log(`[parse-intent] GPT raw: ${raw.slice(0, 200)}`);
     parsed = JSON.parse(raw) as ParsedAction;
+    (parsed as any)._usage = usage;
   } catch (err) {
     console.error("[parse-intent] GPT call failed:", err);
     return jsonError("Failed to parse intent", 502);
@@ -358,6 +360,7 @@ Deno.serve(async (req: Request) => {
       : null,
     model,
     elapsed_ms:    elapsed,
+    usage:         (parsed as any)._usage ?? undefined,
   });
 });
 

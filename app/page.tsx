@@ -68,6 +68,12 @@ interface ParseIntentResponse {
   needsCategory: boolean;
   pendingState?: PendingState | null;
   model?:        string;
+  elapsed_ms?:   number;
+  usage?: {
+    prompt_tokens?:     number;
+    completion_tokens?: number;
+    total_tokens?:      number;
+  };
 }
 
 // ─── Available OpenAI models ──────────────────────────────────────────────────
@@ -446,6 +452,12 @@ export default function HomePage() {
   const [showSettings,  setShowSettings]  = useState(false);
   const [showHelp,      setShowHelp]      = useState(false);
   const [isOnline,      setIsOnline]      = useState(true);
+  const [aiUsageStats,  setAiUsageStats]  = useState<{
+    model: string;
+    elapsedMs?: number;
+    tokens?: number;
+    action?: string;
+  } | null>(null);
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const mediaRecorderRef  = useRef<MediaRecorder | null>(null);
@@ -623,6 +635,13 @@ export default function HomePage() {
         action:  result.action,
         message: result.message,
         model:   result.model,
+      });
+
+      setAiUsageStats({
+        model:     result.model ?? openaiModel,
+        elapsedMs: result.elapsed_ms,
+        tokens:    result.usage?.total_tokens,
+        action:    result.action,
       });
 
       // Update results list
@@ -923,15 +942,39 @@ export default function HomePage() {
       </main>
 
       {/* ── Footer ── */}
-      <footer className="app-footer">
-        <span className="app-footer__version">{VERSION_LABEL}</span>
-        <div className="app-footer__status">
-          <div className={`status-dot ${isOnline ? "" : "status-dot--offline"}`} />
-          <span>{isOnline ? "Online" : "Offline"}</span>
+      <footer className="app-footer" style={{ flexDirection: "column", gap: "0.25rem", padding: "0.5rem 1rem" }}>
+        <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
+          <span className="app-footer__version">{VERSION_LABEL}</span>
+          <div className="app-footer__status">
+            <div className={`status-dot ${isOnline ? "" : "status-dot--offline"}`} />
+            <span>{isOnline ? "Online" : "Offline"}</span>
+          </div>
+          <span style={{ color: "var(--clr-text-3)" }}>
+            {user.email?.split("@")[0] ?? "User"}
+          </span>
         </div>
-        <span style={{ color: "var(--clr-text-3)" }}>
-          {user.email?.split("@")[0] ?? "User"}
-        </span>
+
+        {/* AI usage stats bar */}
+        <div style={{
+          width: "100%",
+          textAlign: "center",
+          fontSize: "0.72rem",
+          color: "var(--clr-text-3)",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+          paddingTop: "0.25rem",
+          letterSpacing: "0.02em"
+        }}>
+          🤖 AI Usage: {aiUsageStats ? (
+            <>
+              <strong>{aiUsageStats.model}</strong>
+              {aiUsageStats.action ? ` • Action: ${aiUsageStats.action}` : ""}
+              {aiUsageStats.tokens ? ` • ${aiUsageStats.tokens} tokens` : ""}
+              {aiUsageStats.elapsedMs ? ` • ${aiUsageStats.elapsedMs}ms` : ""}
+            </>
+          ) : (
+            `Ready (${openaiModel})`
+          )}
+        </div>
       </footer>
 
       {/* ── Settings modal ── */}
