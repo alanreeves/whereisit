@@ -45,41 +45,93 @@ interface RequestBody {
     item_name:  string;
     location:   string;
   } | null;
+  customPrompt?:   string | null;
+  minMatchScore?:  number | null;  // 0.0–1.0, results below this are excluded
 }
 
-// ─── System prompt ────────────────────────────────────────────────────────────
-function buildSystemPrompt(): string {
-  return `You are the intent parser for "Where Is It?", a voice-first household inventory tracker.
-Parse the user's speech transcript and return ONLY valid JSON (no markdown, no explanation).
+// ─── Default system prompt ────────────────────────────────────────────────────
+// This is the built-in prompt. Users can override it via Settings.
+export const DEFAULT_SYSTEM_PROMPT = `You are the intent parser for "Where Is It?", a voice-first household inventory app.
+Your job is to read a natural, conversational phrase spoken by a user and extract structured information.
+Return ONLY a single valid JSON object — no markdown, no explanation, no backticks.
 
-Actions:
-- STORE:            User is putting/storing an item somewhere.
-- SEARCH:           User is looking for an item.
-- MOVE:             User is moving an item to a new location.
-- REMOVE:           User wants to delete/remove an item record.
-- PROVIDE_CATEGORY: User is answering a follow-up question about category/subcategory.
-- UNKNOWN:          Cannot determine intent.
+ACTIONS you must classify:
+  STORE           — user is recording that they put/placed/stored/left/put away an item somewhere
+  SEARCH          — user is looking for, asking about, or wanting to find an item
+  MOVE            — user is recording that an item has moved from one place to another
+  REMOVE          — user wants to delete an item record (thrown away, lost, sold, etc.)
+  PROVIDE_CATEGORY — user is answering a follow-up question about what category/subcategory an item belongs to
+  UNKNOWN         — the phrase does not match any of the above
 
-JSON schema to return:
+OUTPUT JSON SCHEMA (always include every key):
 {
   "type": "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "UNKNOWN",
-  "item_name":    string | null,   // e.g. "passport", "spare car key"
-  "category":     string | null,   // e.g. "Documents", "Tools"
-  "subcategory":  string | null,   // e.g. "Personal", "Hand Tools"
-  "location":     string | null,   // current/source location, e.g. "Office > Desk > Top Drawer"
-  "new_location": string | null,   // MOVE target location only
-  "notes":        string | null,   // any extra details
-  "confidence":   number           // 0.0–1.0
+  "item_name":    string | null,   // the object being tracked, lowercase singular e.g. "passport", "spare key"
+  "category":     string | null,   // broad group e.g. "Documents", "Tools", "Clothing", null if not mentioned
+  "subcategory":  string | null,   // narrower group e.g. "Personal", "Power Tools", null if not mentioned
+  "location":     string | null,   // where the item is/was — use " > " to show hierarchy e.g. "Kitchen > Drawer > Left"
+  "new_location": string | null,   // MOVE only: the destination location
+  "notes":        string | null,   // any extra detail the user mentioned
+  "confidence":   number           // 0.0–1.0 how confident you are in the interpretation
 }
 
-Rules:
-- item_name: always lowercase, singular, trimmed.
-- location: infer hierarchical path using " > " separator if implied.
-- If category or subcategory are not mentioned, return null.
-- For SEARCH, location is where the user thinks it might be (if mentioned), else null.
-- For REMOVE, location/category can be null.
-- Always return valid JSON. Never add backticks or prose.`;
+CRITICAL RULES:
+1. You MUST interpret natural, conversational language. Users will NOT say "store item passport at location desk".
+   They will say things like "my passport is in the desk" or "I just put my keys on the hall table".
+2. Common store phrases: put, placed, stored, left, stuck, popped, shoved, kept, filed, put away, dropped off.
+3. Common search phrases: where is, find, where did I put, have you seen, where are my, looking for, can't find.
+4. Common move phrases: moved, taken, shifted, relocated, transferred, brought, carried.
+5. Common remove phrases: threw away, binned, sold, lost, donated, chucked out, got rid of, deleted.
+6. item_name: always lowercase, singular noun, strip articles ("the", "my", "a").
+7. location: infer a sensible hierarchy when possible. "in the desk" → "Desk". "kitchen top drawer" → "Kitchen > Drawer > Top".
+8. If category/subcategory are not mentioned, return null — do NOT guess them.
+9. NEVER return anything outside the JSON object.
+
+FEW-SHOT EXAMPLES (learn from these):
+
+User: "I put my passport in the desk"
+→ {"type":"STORE","item_name":"passport","category":null,"subcategory":null,"location":"Desk","new_location":null,"notes":null,"confidence":0.98}
+
+User: "My keys are on the hall table"
+→ {"type":"STORE","item_name":"keys","category":null,"subcategory":null,"location":"Hall > Table","new_location":null,"notes":null,"confidence":0.95}
+
+User: "Just left the car manual in the glove box"
+→ {"type":"STORE","item_name":"car manual","category":null,"subcategory":null,"location":"Car > Glove Box","new_location":null,"notes":null,"confidence":0.97}
+
+User: "Spare house key is inside the ceramic pot by the front door"
+→ {"type":"STORE","item_name":"spare house key","category":null,"subcategory":null,"location":"Front Door > Ceramic Pot","new_location":null,"notes":null,"confidence":0.96}
+
+User: "I filed the insurance documents in the grey folder in the office"
+→ {"type":"STORE","item_name":"insurance documents","category":"Documents","subcategory":null,"location":"Office > Grey Folder","new_location":null,"notes":null,"confidence":0.97}
+
+User: "Where is my passport?"
+→ {"type":"SEARCH","item_name":"passport","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "Have you seen my glasses?"
+→ {"type":"SEARCH","item_name":"glasses","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.98}
+
+User: "Where did I leave the blue torch?"
+→ {"type":"SEARCH","item_name":"blue torch","category":null,"subcategory":null,"location":null,"new_location":null,"notes":"blue","confidence":0.95}
+
+User: "I moved the drill from the shed to the garage workbench"
+→ {"type":"MOVE","item_name":"drill","category":null,"subcategory":null,"location":"Shed","new_location":"Garage > Workbench","notes":null,"confidence":0.97}
+
+User: "Taken the charger upstairs to the bedroom"
+→ {"type":"MOVE","item_name":"charger","category":null,"subcategory":null,"location":null,"new_location":"Bedroom","notes":null,"confidence":0.93}
+
+User: "I threw away the old warranty card"
+→ {"type":"REMOVE","item_name":"warranty card","category":null,"subcategory":null,"location":null,"new_location":null,"notes":"old","confidence":0.97}
+
+User: "Delete the hand drill please"
+→ {"type":"REMOVE","item_name":"hand drill","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "It's a document, personal category"
+→ {"type":"PROVIDE_CATEGORY","item_name":null,"category":"Documents","subcategory":"Personal","location":null,"new_location":null,"notes":null,"confidence":0.95}`;
+
+function buildSystemPrompt(customPrompt?: string | null): string {
+  return customPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
 }
+
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
@@ -112,7 +164,7 @@ Deno.serve(async (req: Request) => {
   } catch {
     return jsonError("Invalid JSON body", 400);
   }
-  const { transcript, pendingState } = body;
+  const { transcript, pendingState, customPrompt, minMatchScore } = body;
   if (!transcript?.trim()) return jsonError("transcript is required", 400);
 
   // ── Read settings (reuse service client from auth above) ─────────────────
@@ -129,11 +181,11 @@ Deno.serve(async (req: Request) => {
 
   const openaiKey = settingsRes.data.openai_api_key;
   const model     = userSettingsRes.data?.openai_model ?? DEFAULT_MODEL;
-  console.log(`[parse-intent] Model: ${model}`);
+  console.log(`[parse-intent] Model: ${model}, minMatchScore: ${minMatchScore ?? "none"}`);
 
   // ── Build GPT messages ─────────────────────────────────────────────────────
   const messages: { role: string; content: string }[] = [
-    { role: "system", content: buildSystemPrompt() },
+    { role: "system", content: buildSystemPrompt(customPrompt) },
   ];
 
   if (pendingState?.type === "PENDING_CATEGORY") {
@@ -268,12 +320,22 @@ Deno.serve(async (req: Request) => {
         } else if (!results || results.length === 0) {
           responseMessage = `I couldn't find "${parsed.item_name}" in your inventory.`;
         } else {
-          responseItems   = results;
-          const top       = results[0];
-          responseMessage = `I found "${top.name}" in ${top.location}` +
-            (top.category ? ` (${top.category} › ${top.subcategory ?? "General"})` : "") + ".";
-          if (results.length > 1) {
-            responseMessage += ` There ${results.length === 2 ? "is" : "are"} ${results.length - 1} other possible match${results.length === 2 ? "" : "es"}.`;
+          // Apply minimum match score filter
+          const scoreThreshold = typeof minMatchScore === "number" ? minMatchScore : 0;
+          const filtered = scoreThreshold > 0
+            ? results.filter((r: { hybrid_score?: number }) => (r.hybrid_score ?? 1) >= scoreThreshold)
+            : results;
+
+          if (filtered.length === 0) {
+            responseMessage = `I found some possible matches for "${parsed.item_name}" but none were confident enough (threshold: ${Math.round(scoreThreshold * 100)}%). Try rephrasing.`;
+          } else {
+            responseItems   = filtered;
+            const top       = filtered[0];
+            responseMessage = `I found "${top.name}" in ${top.location}` +
+              (top.category ? ` (${top.category} › ${top.subcategory ?? "General"})` : "") + ".";
+            if (filtered.length > 1) {
+              responseMessage += ` There ${filtered.length === 2 ? "is" : "are"} ${filtered.length - 1} other possible match${filtered.length === 2 ? "" : "es"}.`;
+            }
           }
         }
       } else {

@@ -278,37 +278,45 @@ function AuthScreen({ onAuth }: { onAuth: (session: Session) => void }) {
 function SettingsModal({
   userId,
   currentModel,
+  currentCustomPrompt,
+  currentMinMatchScore,
   onSave,
   onClose,
 }: {
-  userId:       string;
-  currentModel: string;
-  onSave:       (model: string) => void;
-  onClose:      () => void;
+  userId:               string;
+  currentModel:         string;
+  currentCustomPrompt:  string | null;
+  currentMinMatchScore: number;
+  onSave: (model: string, customPrompt: string | null, minMatchScore: number) => void;
+  onClose: () => void;
 }) {
-  const [model,   setModel]   = useState(currentModel);
-  const [saving,  setSaving]  = useState(false);
-  const [saved,   setSaved]   = useState(false);
+  const [model,        setModel]        = useState(currentModel);
+  const [prompt,       setPrompt]       = useState(currentCustomPrompt ?? "");
+  const [scoreThresh,  setScoreThresh]  = useState(Math.round(currentMinMatchScore * 100));
+  const [saving,       setSaving]       = useState(false);
+  const [saved,        setSaved]        = useState(false);
   const supabase = getSupabaseClient();
 
   async function handleSave() {
     setSaving(true);
-    logger.info("SETTINGS", "Saving model preference", { model });
+    const resolvedPrompt   = prompt.trim() || null;
+    const resolvedScore    = scoreThresh / 100;
+    logger.info("SETTINGS", "Saving settings", { model, hasCustomPrompt: !!resolvedPrompt, minMatchScore: resolvedScore });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from("user_settings")
       .upsert(
-        { user_id: userId, openai_model: model },
+        { user_id: userId, openai_model: model, custom_prompt: resolvedPrompt, min_match_score: resolvedScore },
         { onConflict: "user_id" }
       ) as { error: { message: string } | null };
 
     if (error) {
       logger.warn("SETTINGS", "Save failed", error.message);
     } else {
-      logger.info("SETTINGS", "Model saved", { model });
+      logger.info("SETTINGS", "Settings saved");
       setSaved(true);
-      onSave(model);
+      onSave(model, resolvedPrompt, resolvedScore);
       setTimeout(onClose, 800);
     }
     setSaving(false);
@@ -316,9 +324,10 @@ function SettingsModal({
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="glass-strong modal-sheet" style={{ position: "relative" }}>
+      <div className="glass-strong modal-sheet" style={{ position: "relative", maxHeight: "90vh", overflowY: "auto" }}>
         <h2 className="modal-title">⚙️ Settings</h2>
 
+        {/* Model */}
         <div className="form-group">
           <label className="form-label" htmlFor="model-select">OpenAI Model</label>
           <select
@@ -333,6 +342,43 @@ function SettingsModal({
           </select>
           <p style={{ fontSize: "0.75rem", color: "var(--clr-text-3)", marginTop: "0.25rem" }}>
             Applies to intent parsing only. Embeddings always use text-embedding-3-small.
+          </p>
+        </div>
+
+        {/* Minimum match score */}
+        <div className="form-group">
+          <label className="form-label" htmlFor="score-thresh">
+            Minimum match score: <strong>{scoreThresh}%</strong>
+          </label>
+          <input
+            id="score-thresh"
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={scoreThresh}
+            onChange={e => setScoreThresh(Number(e.target.value))}
+            style={{ width: "100%", accentColor: "var(--clr-primary)" }}
+          />
+          <p style={{ fontSize: "0.75rem", color: "var(--clr-text-3)", marginTop: "0.25rem" }}>
+            Search results with a match score below this threshold are hidden. 0% = show everything.
+          </p>
+        </div>
+
+        {/* Custom system prompt */}
+        <div className="form-group">
+          <label className="form-label" htmlFor="custom-prompt">Custom AI Prompt (optional)</label>
+          <textarea
+            id="custom-prompt"
+            className="form-input"
+            rows={8}
+            placeholder={`Leave empty to use the built-in prompt.\n\nExample override:\n"Parse the user's speech and return JSON with type (STORE/SEARCH/MOVE/REMOVE), item_name, and location..."`}
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+            style={{ resize: "vertical", fontFamily: "monospace", fontSize: "0.75rem" }}
+          />
+          <p style={{ fontSize: "0.75rem", color: "var(--clr-text-3)", marginTop: "0.25rem" }}>
+            Advanced: override the system prompt sent to the AI. Clear to restore the default.
           </p>
         </div>
 
@@ -451,6 +497,8 @@ export default function HomePage() {
   const [results,       setResults]       = useState<ItemResult[]>([]);
   const [pendingState,  setPendingState]  = useState<PendingState | null>(null);
   const [openaiModel,   setOpenaiModel]   = useState<string>("gpt-5.6-luna");
+  const [customPrompt,  setCustomPrompt]  = useState<string | null>(null);  // null = use server default
+  const [minMatchScore, setMinMatchScore] = useState<number>(0.5);  // 50% default
   const [showSettings,  setShowSettings]  = useState(false);
   const [showHelp,      setShowHelp]      = useState(false);
   const [isOnline,      setIsOnline]      = useState(true);
@@ -490,6 +538,22 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ─── Load user settings ───────────────────────────────────────────────────
+  async function loadUserSettings(uid: string) {
+    logger.info("SETTINGS", "Loading user settings", { uid });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("user_settings")
+      .select("openai_model, custom_prompt, min_match_score")
+      .eq("user_id", uid)
+      .single() as { data: { openai_model: string; custom_prompt: string | null; min_match_score: number | null } | null };
+
+    if (data?.openai_model)    setOpenaiModel(data.openai_model);
+    if (data?.custom_prompt !== undefined) setCustomPrompt(data.custom_prompt ?? null);
+    if (typeof data?.min_match_score === "number") setMinMatchScore(data.min_match_score);
+    logger.info("SETTINGS", "Settings loaded", { model: data?.openai_model, minMatchScore: data?.min_match_score });
+  }
+
   // ─── Online/offline ───────────────────────────────────────────────────────
   useEffect(() => {
     const onOnline  = () => setIsOnline(true);
@@ -519,21 +583,7 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
-  // ─── Load user settings ───────────────────────────────────────────────────
-  async function loadUserSettings(uid: string) {
-    logger.info("SETTINGS", "Loading user settings", { uid });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("user_settings")
-      .select("openai_model")
-      .eq("user_id", uid)
-      .single() as { data: { openai_model: string } | null };
 
-    if (data?.openai_model) {
-      setOpenaiModel(data.openai_model);
-      logger.info("SETTINGS", "Model loaded", { model: data.openai_model });
-    }
-  }
 
   // ─── Add message helper ───────────────────────────────────────────────────
   const addMessage = useCallback((role: Message["role"], text: string, action?: ActionType) => {
@@ -629,7 +679,7 @@ export default function HomePage() {
       // Step 2: Parse intent via Supabase Edge Function
       logger.info("EDGE", "Sending transcript to parse-intent", { transcript, pendingState });
       const intentRes = await supabase.functions.invoke<ParseIntentResponse>("parse-intent", {
-        body: { transcript, pendingState },
+        body: { transcript, pendingState, customPrompt, minMatchScore },
       });
 
       if (intentRes.error) {
@@ -690,7 +740,7 @@ export default function HomePage() {
 
     try {
       const intentRes = await supabase.functions.invoke<ParseIntentResponse>("parse-intent", {
-        body: { transcript: text.trim(), pendingState },
+        body: { transcript: text.trim(), pendingState, customPrompt, minMatchScore },
       });
 
       if (intentRes.error) throw new Error(`Parse intent error: ${intentRes.error.message}`);
@@ -1128,7 +1178,13 @@ export default function HomePage() {
         <SettingsModal
           userId={user.id}
           currentModel={openaiModel}
-          onSave={setOpenaiModel}
+          currentCustomPrompt={customPrompt}
+          currentMinMatchScore={minMatchScore}
+          onSave={(m, p, s) => {
+            setOpenaiModel(m);
+            setCustomPrompt(p);
+            setMinMatchScore(s);
+          }}
           onClose={() => setShowSettings(false)}
         />
       )}

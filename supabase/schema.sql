@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- Where Is It? — Supabase Database Schema
 -- =============================================================================
 -- Run this in: Supabase Dashboard → SQL Editor → New Query → Run
@@ -45,10 +45,12 @@ COMMENT ON TABLE public.app_settings IS
 -- Per-user preferences — OpenAI model selection, future UI prefs.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS public.user_settings (
-  user_id       uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  openai_model  text NOT NULL DEFAULT 'gpt-5.6-luna',
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now()
+  user_id         uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  openai_model    text NOT NULL DEFAULT 'gpt-5.6-luna',
+  custom_prompt   text,
+  min_match_score float8 NOT NULL DEFAULT 0.5,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE public.user_settings ENABLE ROW LEVEL SECURITY;
