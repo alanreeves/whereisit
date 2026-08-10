@@ -1655,6 +1655,31 @@ function InventoryModal({
   const [loading, setLoading]     = useState<boolean>(!initialItems?.length);
   const [filterText, setFilterText] = useState("");
   const [editingItem, setEditingItem] = useState<ItemResult | null>(null);
+  const [deletingId, setDeletingId]   = useState<string | null>(null);
+
+  const handleDeleteItem = useCallback(async (item: ItemResult) => {
+    if (!confirm(`Are you sure you want to delete "${item.name}" from your inventory?`)) return;
+
+    setDeletingId(item.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from("items")
+      .delete()
+      .eq("id", item.id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Delete item failed:", error.message);
+      alert(`Failed to delete "${item.name}". Please try again.`);
+    } else {
+      setItems(prev => {
+        const next = prev.filter(i => i.id !== item.id);
+        onItemsUpdated?.(next);
+        return next;
+      });
+    }
+    setDeletingId(null);
+  }, [supabase, userId, onItemsUpdated]);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -1817,15 +1842,25 @@ function InventoryModal({
                             <td style={{ ...cellStyle, color: "var(--clr-text-2)" }}>{item.category || "—"}</td>
                             <td style={{ ...cellStyle, color: "var(--clr-text-2)" }}>{item.subcategory || "—"}</td>
                             <td style={{ ...cellStyle, color: "var(--clr-text-1)" }}>📍 {item.location}</td>
-                            <td style={{ ...cellStyle, textAlign: "center" }}>
+                            <td style={{ ...cellStyle, textAlign: "center", whiteSpace: "nowrap" }}>
                               <button
                                 id={`edit-item-btn-${item.id}`}
                                 className="btn btn--ghost btn--icon"
                                 onClick={() => setEditingItem(item)}
                                 title={`Edit ${item.name}`}
-                                style={{ padding: "0.2rem 0.4rem", fontSize: "0.85rem" }}
+                                style={{ padding: "0.2rem 0.4rem", fontSize: "0.85rem", marginRight: "0.2rem" }}
                               >
                                 ✏️
+                              </button>
+                              <button
+                                id={`delete-item-btn-${item.id}`}
+                                className="btn btn--ghost btn--icon"
+                                onClick={() => handleDeleteItem(item)}
+                                disabled={deletingId === item.id}
+                                title={`Delete ${item.name}`}
+                                style={{ padding: "0.2rem 0.4rem", fontSize: "0.85rem", color: "#ef4444" }}
+                              >
+                                {deletingId === item.id ? <span className="spinner" /> : "🗑️"}
                               </button>
                             </td>
                           </tr>
@@ -1856,6 +1891,11 @@ function InventoryModal({
             setEditingItem(null);
             onItemsUpdated?.(items.map(i => i.id === updated.id ? updated : i));
           }}
+          onDeleted={(deletedId) => {
+            setItems(prev => prev.filter(i => i.id !== deletedId));
+            setEditingItem(null);
+            onItemsUpdated?.(items.filter(i => i.id !== deletedId));
+          }}
         />
       )}
     </div>
@@ -1870,11 +1910,13 @@ function EditItemModal({
   item,
   onClose,
   onSaved,
+  onDeleted,
 }: {
   userId: string;
   item: ItemResult;
   onClose: () => void;
   onSaved: (updatedItem: ItemResult) => void;
+  onDeleted: (deletedId: string) => void;
 }) {
   const supabase = getSupabaseClient();
   const [name, setName]               = useState(item.name);
@@ -1883,7 +1925,28 @@ function EditItemModal({
   const [location, setLocation]       = useState(item.location);
   const [notes, setNotes]             = useState(item.notes ?? "");
   const [saving, setSaving]           = useState(false);
+  const [deleting, setDeleting]       = useState(false);
   const [errorMsg, setErrorMsg]       = useState<string | null>(null);
+
+  async function handleDelete() {
+    if (!confirm(`Are you sure you want to delete "${item.name}" from your inventory?`)) return;
+    setDeleting(true);
+    setErrorMsg(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from("items")
+      .delete()
+      .eq("id", item.id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Delete item failed:", error.message);
+      setErrorMsg("Failed to delete item. Please try again.");
+      setDeleting(false);
+    } else {
+      onDeleted(item.id);
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -2008,6 +2071,15 @@ function EditItemModal({
           </div>
 
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              style={{ color: "#ef4444", flex: 1 }}
+              onClick={handleDelete}
+              disabled={deleting || saving}
+            >
+              {deleting ? <span className="spinner" /> : "🗑 Delete"}
+            </button>
             <button type="button" className="btn btn--ghost" style={{ flex: 1 }} onClick={onClose}>
               Cancel
             </button>
@@ -2016,7 +2088,7 @@ function EditItemModal({
               type="submit"
               className="btn btn--primary"
               style={{ flex: 2 }}
-              disabled={saving}
+              disabled={saving || deleting}
             >
               {saving ? <span className="spinner" /> : "Save Changes"}
             </button>
