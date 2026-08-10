@@ -349,6 +349,84 @@ function SettingsModal({
 }
 
 // =============================================================================
+// HELP GUIDE MODAL
+// =============================================================================
+function HelpModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="glass-strong modal-sheet" style={{ position: "relative", maxHeight: "85vh", overflowY: "auto" }}>
+        <h2 className="modal-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          📖 Voice Help & Spoken Commands Guide
+        </h2>
+        <p style={{ fontSize: "0.85rem", color: "var(--clr-text-2)", marginBottom: "1rem" }}>
+          Speak naturally! Here are examples of voice commands you can use to track, find, move, or delete household items.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {/* STORE */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid var(--clr-primary)" }}>
+            <h3 style={{ fontSize: "0.95rem", color: "var(--clr-primary)", marginBottom: "0.25rem" }}>📦 Storing Items</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--clr-text-2)", marginBottom: "0.5rem" }}>Add a new item or set its initial location.</p>
+            <ul style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>&quot;I put my <strong>passport</strong> in the <strong>office desk top drawer</strong>.&quot;</li>
+              <li>&quot;Stored <strong>hand drill</strong> under <strong>garage workbench</strong>.&quot;</li>
+              <li>&quot;Place <strong>spare house key</strong> inside <strong>hallway keybox</strong>.&quot;</li>
+            </ul>
+          </div>
+
+          {/* SEARCH */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #10b981" }}>
+            <h3 style={{ fontSize: "0.95rem", color: "#10b981", marginBottom: "0.25rem" }}>🔍 Finding & Locating Items</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--clr-text-2)", marginBottom: "0.5rem" }}>Ask where something is stored using natural questions.</p>
+            <ul style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>&quot;Where is my <strong>passport</strong>?&quot;</li>
+              <li>&quot;Find the <strong>hand drill</strong>.&quot;</li>
+              <li>&quot;Where did I leave my <strong>spare house key</strong>?&quot;</li>
+            </ul>
+          </div>
+
+          {/* MOVE */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #f59e0b" }}>
+            <h3 style={{ fontSize: "0.95rem", color: "#f59e0b", marginBottom: "0.25rem" }}>🚚 Moving Items</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--clr-text-2)", marginBottom: "0.5rem" }}>Relocate an item to a new location.</p>
+            <ul style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>&quot;Moved my <strong>passport</strong> from <strong>desk</strong> to <strong>bedroom safe</strong>.&quot;</li>
+              <li>&quot;I took the <strong>hand drill</strong> to the <strong>shed shelf</strong>.&quot;</li>
+              <li>&quot;Relocate <strong>car manual</strong> to <strong>glove compartment</strong>.&quot;</li>
+            </ul>
+          </div>
+
+          {/* REMOVE */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #ef4444" }}>
+            <h3 style={{ fontSize: "0.95rem", color: "#ef4444", marginBottom: "0.25rem" }}>🗑 Removing & Deleting Items</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--clr-text-2)", marginBottom: "0.5rem" }}>Remove item records when used up or discarded.</p>
+            <ul style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>&quot;Delete the <strong>hand drill</strong> record.&quot;</li>
+              <li>&quot;I threw away the <strong>old batteries</strong>.&quot;</li>
+              <li>&quot;Remove <strong>expired warranty card</strong>.&quot;</li>
+            </ul>
+          </div>
+
+          {/* CATEGORIES */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #8b5cf6" }}>
+            <h3 style={{ fontSize: "0.95rem", color: "#8b5cf6", marginBottom: "0.25rem" }}>🏷 Multi-Tier Hierarchy</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--clr-text-2)", margin: 0 }}>
+              Items are structured into <strong>Primary Category</strong> (e.g. Documents, Tools), <strong>Subcategory</strong> (e.g. Personal, Hand Tools), and <strong>Location Path</strong> (e.g. Office &gt; Desk &gt; Top Drawer). If a category is missing, the app will ask you!
+            </p>
+          </div>
+        </div>
+
+        <div style={{ marginTop: "1.25rem" }}>
+          <button className="btn btn--primary btn--full" onClick={onClose}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // MAIN APP
 // =============================================================================
 export default function HomePage() {
@@ -366,6 +444,7 @@ export default function HomePage() {
   const [pendingState,  setPendingState]  = useState<PendingState | null>(null);
   const [openaiModel,   setOpenaiModel]   = useState<string>("gpt-5.6-luna");
   const [showSettings,  setShowSettings]  = useState(false);
+  const [showHelp,      setShowHelp]      = useState(false);
   const [isOnline,      setIsOnline]      = useState(true);
 
   // ── Refs ─────────────────────────────────────────────────────────────────
@@ -657,6 +736,15 @@ export default function HomePage() {
         <span className="app-header__logo">🔍 Where Is It?</span>
         <div className="app-header__actions">
           <button
+            id="help-btn"
+            className="btn btn--ghost btn--icon"
+            onClick={() => setShowHelp(true)}
+            aria-label="Voice Help Guide"
+            title="Voice Help Guide"
+          >
+            ❓
+          </button>
+          <button
             id="settings-btn"
             className="btn btn--ghost btn--icon"
             onClick={() => setShowSettings(true)}
@@ -854,6 +942,11 @@ export default function HomePage() {
           onSave={setOpenaiModel}
           onClose={() => setShowSettings(false)}
         />
+      )}
+
+      {/* ── Help guide modal ── */}
+      {showHelp && (
+        <HelpModal onClose={() => setShowHelp(false)} />
       )}
     </div>
   );
