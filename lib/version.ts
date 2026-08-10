@@ -18,7 +18,7 @@
  *   PATCH - bug-fixes, styling tweaks
  */
 
-export const APP_VERSION = "1.5.0" as const;
+export const APP_VERSION = "1.6.0" as const;
 
 /**
  * The full cache-key prefix used by the Service Worker.

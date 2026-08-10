@@ -573,12 +573,16 @@ export default function HomePage() {
     }
   }, [messages]);
 
-  // ─── Speak on new system messages ────────────────────────────────────────
+  // ─── Speak on new system messages (voice mode only) ────────────────────────
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (last?.role === "system") {
-      setVoiceState("SPEAKING");
-      speak(last.text, () => setVoiceState(pendingState ? "PENDING_CATEGORY" : "IDLE"));
+      if (inputMode === "voice") {
+        setVoiceState("SPEAKING");
+        speak(last.text, () => setVoiceState(pendingState ? "PENDING_CATEGORY" : "IDLE"));
+      } else {
+        setVoiceState(pendingState ? "PENDING_CATEGORY" : "IDLE");
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
@@ -773,12 +777,6 @@ export default function HomePage() {
       }
 
       addMessage("system", result.message, result.action);
-
-      // Speak response even in text mode
-      setVoiceState("SPEAKING");
-      speak(result.message, () => {
-        setVoiceState(result.needsCategory ? "PENDING_CATEGORY" : "IDLE");
-      });
     } catch (err) {
       logger.error("TEXT", "Text processing failed", err);
       addMessage("system", "Something went wrong. Please try again.");
@@ -876,6 +874,7 @@ export default function HomePage() {
             id="input-mode-btn"
             className="btn btn--ghost btn--icon"
             onClick={() => {
+              window.speechSynthesis?.cancel();
               setInputMode(m => m === "voice" ? "text" : "voice");
               setVoiceState("IDLE");
               // Focus text input after switching to text mode
