@@ -622,6 +622,7 @@ export default function HomePage() {
   const [showHelp,      setShowHelp]      = useState(false);
   const [showCost,      setShowCost]      = useState(false);
   const [showInventory, setShowInventory] = useState(false);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<ItemResult[]>([]);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isStandalone,   setIsStandalone]   = useState(false);
@@ -689,13 +690,16 @@ export default function HomePage() {
   }, []);
 
   const handleInstallApp = useCallback(async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    logger.info("PWA", "User install prompt outcome", { outcome });
-    if (outcome === "accepted") {
-      setDeferredPrompt(null);
-      setIsStandalone(true);
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      logger.info("PWA", "User install prompt outcome", { outcome });
+      if (outcome === "accepted") {
+        setDeferredPrompt(null);
+        setIsStandalone(true);
+      }
+    } else {
+      setShowInstallGuide(true);
     }
   }, [deferredPrompt]);
 
@@ -1085,17 +1089,15 @@ export default function HomePage() {
           >
             📦
           </button>
-          {deferredPrompt && (
-            <button
-              id="install-pwa-btn"
-              className="btn btn--ghost btn--icon"
-              onClick={handleInstallApp}
-              aria-label="Install App as PWA"
-              title="Install App as PWA on Mobile / Desktop"
-            >
-              📲
-            </button>
-          )}
+          <button
+            id="install-pwa-btn"
+            className="btn btn--ghost btn--icon"
+            onClick={handleInstallApp}
+            aria-label="Install App as PWA"
+            title={deferredPrompt ? "Install App as PWA" : "App Installation Guide"}
+          >
+            📲
+          </button>
           <button
             id="settings-btn"
             className="btn btn--ghost btn--icon"
@@ -1413,6 +1415,14 @@ export default function HomePage() {
             setInventoryItems(updated);
             setResults(updated.slice(0, 10));
           }}
+        />
+      )}
+
+      {/* ── Install Guide modal ── */}
+      {showInstallGuide && (
+        <InstallGuideModal
+          isStandalone={isStandalone}
+          onClose={() => setShowInstallGuide(false)}
         />
       )}
     </div>
@@ -2093,6 +2103,74 @@ function EditItemModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// INSTALL GUIDE MODAL
+// =============================================================================
+function InstallGuideModal({
+  isStandalone,
+  onClose,
+}: {
+  isStandalone: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="glass-strong modal-sheet" style={{ maxWidth: "520px", width: "92%", position: "relative", maxHeight: "88vh", overflowY: "auto" }}>
+        <h2 className="modal-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          📲 Install &quot;Where Is It?&quot; PWA
+        </h2>
+
+        {isStandalone ? (
+          <div style={{ color: "#10b981", background: "rgba(16, 185, 129, 0.1)", padding: "0.75rem", borderRadius: "8px", marginBottom: "1rem", textAlign: "center" }}>
+            ✓ App is already installed and running in standalone mode!
+          </div>
+        ) : (
+          <p style={{ fontSize: "0.85rem", color: "var(--clr-text-2)", marginBottom: "1rem" }}>
+            Install this web app on your phone or computer for a fast, native full-screen experience with offline support.
+          </p>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {/* Android */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #34d399" }}>
+            <h3 style={{ fontSize: "0.9rem", color: "#34d399", marginBottom: "0.35rem" }}>🤖 Android (Chrome / Edge / Firefox)</h3>
+            <ol style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>Tap the browser menu (<strong>⋮</strong> three dots top-right).</li>
+              <li>Tap <strong>&quot;Install app&quot;</strong> or <strong>&quot;Add to Home screen&quot;</strong>.</li>
+              <li>Tap <strong>Install</strong> to confirm.</li>
+            </ol>
+          </div>
+
+          {/* iOS */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #38bdf8" }}>
+            <h3 style={{ fontSize: "0.9rem", color: "#38bdf8", marginBottom: "0.35rem" }}>🍏 iPhone / iPad (Safari)</h3>
+            <ol style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>Tap the <strong>Share</strong> button (<strong>⎘</strong> square with arrow up) at the bottom of Safari.</li>
+              <li>Scroll down and tap <strong>&quot;Add to Home Screen&quot;</strong>.</li>
+              <li>Tap <strong>Add</strong> in the top-right corner.</li>
+            </ol>
+          </div>
+
+          {/* Desktop */}
+          <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.85rem", borderRadius: "0.5rem", borderLeft: "3px solid #a78bfa" }}>
+            <h3 style={{ fontSize: "0.9rem", color: "#a78bfa", marginBottom: "0.35rem" }}>💻 Computer (Chrome / Edge / Brave)</h3>
+            <ol style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
+              <li>Click the <strong>Install icon</strong> (<strong>⊕</strong>) on the right end of the address bar.</li>
+              <li>Or click menu (<strong>⋮</strong>) → <strong>Save and Share</strong> → <strong>Install Where Is It?</strong></li>
+            </ol>
+          </div>
+        </div>
+
+        <div style={{ marginTop: "1.25rem", display: "flex", justifyContent: "flex-end" }}>
+          <button className="btn btn--primary" style={{ width: "100%" }} onClick={onClose}>
+            Got it!
+          </button>
+        </div>
       </div>
     </div>
   );
