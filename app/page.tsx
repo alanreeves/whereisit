@@ -435,7 +435,9 @@ function HelpModal({ onClose }: { onClose: () => void }) {
             <ul style={{ fontSize: "0.8rem", color: "var(--clr-text-1)", paddingLeft: "1.2rem", margin: 0 }}>
               <li>&quot;Where is my <strong>passport</strong>?&quot;</li>
               <li>&quot;Find the <strong>hand drill</strong>.&quot;</li>
-              <li>&quot;Where did I leave my <strong>spare house key</strong>?&quot;</li>
+              <li>&quot;<strong>Find all items</strong>&quot;</li>
+              <li>&quot;<strong>Find all items in category Documents</strong>&quot;</li>
+              <li>&quot;<strong>Find all items in category Documents subcategory Personal</strong>&quot;</li>
             </ul>
           </div>
 

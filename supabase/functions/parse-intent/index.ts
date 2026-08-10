@@ -107,6 +107,15 @@ User: "I filed the insurance documents in the grey folder in the office"
 User: "Where is my passport?"
 → {"type":"SEARCH","item_name":"passport","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
 
+User: "Find all items"
+→ {"type":"SEARCH","item_name":"all","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "Find all items in category Documents"
+→ {"type":"SEARCH","item_name":"all","category":"Documents","subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.99}
+
+User: "Find all items in category Documents subcategory Personal"
+→ {"type":"SEARCH","item_name":"all","category":"Documents","subcategory":"Personal","location":null,"new_location":null,"notes":null,"confidence":0.99}
+
 User: "Have you seen my glasses?"
 → {"type":"SEARCH","item_name":"glasses","category":null,"subcategory":null,"location":null,"new_location":null,"notes":null,"confidence":0.98}
 
@@ -234,9 +243,16 @@ Deno.serve(async (req: Request) => {
 
   console.log(`[parse-intent] Action: ${parsed.type}, item: ${parsed.item_name}, confidence: ${parsed.confidence}`);
 
+  // ── Determine if this is an "all items" / list query ─────────────────────
+  const rawName = parsed.item_name?.trim().toLowerCase() ?? "";
+  const isAllQuery = parsed.type === "SEARCH" && (!rawName ||
+    ["all", "all items", "everything", "*", "items", "all of my items", "all items in category", "list items"].includes(rawName) ||
+    rawName.startsWith("all items") ||
+    rawName.startsWith("everything"));
+
   // ── Generate embedding (STORE, MOVE, SEARCH) ──────────────────────────────
   let embedding: number[] | null = null;
-  if (["STORE", "MOVE", "SEARCH", "PROVIDE_CATEGORY"].includes(parsed.type) && parsed.item_name) {
+  if (["STORE", "MOVE", "SEARCH", "PROVIDE_CATEGORY"].includes(parsed.type) && parsed.item_name && !isAllQuery) {
     try {
       const embRes = await fetch(`${OPENAI_API_URL}/embeddings`, {
         method:  "POST",
@@ -296,6 +312,41 @@ Deno.serve(async (req: Request) => {
 
     // ── SEARCH ─────────────────────────────────────────────────────────────
     case "SEARCH": {
+      if (isAllQuery) {
+        let query = svc.from("items").select().eq("user_id", userId);
+        if (parsed.category) {
+          query = query.ilike("category", parsed.category);
+        }
+        if (parsed.subcategory) {
+          query = query.ilike("subcategory", parsed.subcategory);
+        }
+
+        const { data: allItems, error: allErr } = await query.order("name", { ascending: true }).limit(50);
+
+        if (allErr) {
+          console.error("[parse-intent] All items query error:", allErr.message);
+          responseMessage = "I ran into a problem loading items. Please try again.";
+        } else if (!allItems || allItems.length === 0) {
+          if (parsed.category && parsed.subcategory) {
+            responseMessage = `I couldn't find any items in category "${parsed.category}" › "${parsed.subcategory}".`;
+          } else if (parsed.category) {
+            responseMessage = `I couldn't find any items in category "${parsed.category}".`;
+          } else {
+            responseMessage = "Your inventory is currently empty.";
+          }
+        } else {
+          responseItems = allItems;
+          if (parsed.category && parsed.subcategory) {
+            responseMessage = `Found ${allItems.length} item${allItems.length === 1 ? "" : "s"} in "${parsed.category} › ${parsed.subcategory}".`;
+          } else if (parsed.category) {
+            responseMessage = `Found ${allItems.length} item${allItems.length === 1 ? "" : "s"} in category "${parsed.category}".`;
+          } else {
+            responseMessage = `Found ${allItems.length} item${allItems.length === 1 ? "" : "s"} in your inventory.`;
+          }
+        }
+        break;
+      }
+
       if (!parsed.item_name) {
         responseMessage = "I couldn't work out what you're looking for. Please try again.";
         break;
