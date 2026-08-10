@@ -26,6 +26,8 @@ type VoiceState =
   | "SPEAKING"
   | "PENDING_CATEGORY";
 
+type InputMode = "voice" | "text";
+
 type ActionType =
   | "STORE"
   | "SEARCH"
@@ -452,6 +454,10 @@ export default function HomePage() {
   const [showSettings,  setShowSettings]  = useState(false);
   const [showHelp,      setShowHelp]      = useState(false);
   const [isOnline,      setIsOnline]      = useState(true);
+  const [inputMode,     setInputMode]     = useState<InputMode>("voice");
+  const [textInput,     setTextInput]     = useState("");
+  const [isSubmitting,  setIsSubmitting]  = useState(false);
+  const textInputRef                      = useRef<HTMLTextAreaElement>(null);
   const [aiUsageStats,  setAiUsageStats]  = useState<{
     model: string;
     elapsedMs?: number;
@@ -673,6 +679,67 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingState, addMessage]);
 
+  // ─── Process typed text directly to parse-intent ─────────────────────────
+  const processText = useCallback(async (text: string) => {
+    if (!text.trim() || isSubmitting) return;
+    setIsSubmitting(true);
+    setVoiceState("PROCESSING");
+    setTextInput("");
+    addMessage("user", text.trim());
+    logger.info("TEXT", "Sending typed input to parse-intent", { text });
+
+    try {
+      const intentRes = await supabase.functions.invoke<ParseIntentResponse>("parse-intent", {
+        body: { transcript: text.trim(), pendingState },
+      });
+
+      if (intentRes.error) throw new Error(`Parse intent error: ${intentRes.error.message}`);
+
+      const result = intentRes.data!;
+      logger.info("OPENAI", "Intent parsed (text mode)", { action: result.action, model: result.model });
+
+      setAiUsageStats({
+        model:     result.model ?? openaiModel,
+        elapsedMs: result.elapsed_ms,
+        tokens:    result.usage?.total_tokens,
+        action:    result.action,
+      });
+
+      if (result.items?.length) {
+        setResults(result.items);
+      } else if (result.item) {
+        setResults(prev => {
+          const next = [result.item as ItemResult, ...prev.filter(i => i.id !== result.item!.id)];
+          return next.slice(0, 10);
+        });
+      }
+
+      if (result.needsCategory && result.pendingState) {
+        setPendingState(result.pendingState);
+        setVoiceState("PENDING_CATEGORY");
+      } else {
+        setPendingState(null);
+        setVoiceState("IDLE");
+      }
+
+      addMessage("system", result.message, result.action);
+
+      // Speak response even in text mode
+      setVoiceState("SPEAKING");
+      speak(result.message, () => {
+        setVoiceState(result.needsCategory ? "PENDING_CATEGORY" : "IDLE");
+      });
+    } catch (err) {
+      logger.error("TEXT", "Text processing failed", err);
+      addMessage("system", "Something went wrong. Please try again.");
+      setVoiceState("IDLE");
+      setPendingState(null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingState, addMessage, isSubmitting, openaiModel]);
+
   // ─── Sign out ─────────────────────────────────────────────────────────────
   async function signOut() {
     logger.info("AUTH", "Signing out");
@@ -754,6 +821,23 @@ export default function HomePage() {
       <header className="app-header">
         <span className="app-header__logo">🔍 Where Is It?</span>
         <div className="app-header__actions">
+          {/* Input mode toggle: shows mic icon when in text mode, keyboard when in voice mode */}
+          <button
+            id="input-mode-btn"
+            className="btn btn--ghost btn--icon"
+            onClick={() => {
+              setInputMode(m => m === "voice" ? "text" : "voice");
+              setVoiceState("IDLE");
+              // Focus text input after switching to text mode
+              if (inputMode === "voice") {
+                setTimeout(() => textInputRef.current?.focus(), 100);
+              }
+            }}
+            aria-label={inputMode === "voice" ? "Switch to keyboard input" : "Switch to voice input"}
+            title={inputMode === "voice" ? "Switch to keyboard" : "Switch to microphone"}
+          >
+            {inputMode === "voice" ? "⌨️" : "🎙"}
+          </button>
           <button
             id="help-btn"
             className="btn btn--ghost btn--icon"
@@ -799,8 +883,9 @@ export default function HomePage() {
               <div className="empty-state">
                 <div className="empty-state__icon">💬</div>
                 <p className="empty-state__text">
-                  Tap the mic and say something like:<br />
-                  <em>"I put my passport in the top drawer"</em>
+                  {inputMode === "voice"
+                    ? <>{"Tap the mic and say something like:"}<br /><em>&quot;I put my passport in the top drawer&quot;</em></>
+                    : <>{"Type something like:"}<br /><em>&quot;Where is my passport?&quot;</em></>}
                 </p>
               </div>
             ) : (
@@ -903,41 +988,102 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Mic button */}
-          <div className="mic-section">
-            <div className="mic-wrapper">
-              <div className={`mic-ring mic-ring--1 ${
-                voiceState === "RECORDING" ? "mic-btn--recording" :
-                voiceState === "PROCESSING" ? "mic-btn--processing" : ""
-              }`} />
-              <div className={`mic-ring mic-ring--2 ${
-                voiceState === "RECORDING" ? "mic-btn--recording" : ""
-              }`} />
-              <button
-                id="mic-btn"
-                className={micClass}
-                onClick={handleMicPress}
-                disabled={voiceState === "PROCESSING" || voiceState === "SPEAKING"}
-                aria-label={voiceState === "RECORDING" ? "Stop recording" : "Start recording"}
-                aria-pressed={voiceState === "RECORDING"}
-              >
-                <span style={{ fontSize: "1.75rem" }} aria-hidden>{micIcon}</span>
-              </button>
+          {inputMode === "voice" ? (
+            /* ── Voice / Mic panel ── */
+            <div className="mic-section">
+              <div className="mic-wrapper">
+                <div className={`mic-ring mic-ring--1 ${
+                  voiceState === "RECORDING" ? "mic-btn--recording" :
+                  voiceState === "PROCESSING" ? "mic-btn--processing" : ""
+                }`} />
+                <div className={`mic-ring mic-ring--2 ${
+                  voiceState === "RECORDING" ? "mic-btn--recording" : ""
+                }`} />
+                <button
+                  id="mic-btn"
+                  className={micClass}
+                  onClick={handleMicPress}
+                  disabled={voiceState === "PROCESSING" || voiceState === "SPEAKING"}
+                  aria-label={voiceState === "RECORDING" ? "Stop recording" : "Start recording"}
+                  aria-pressed={voiceState === "RECORDING"}
+                >
+                  <span style={{ fontSize: "1.75rem" }} aria-hidden>{micIcon}</span>
+                </button>
+              </div>
+
+              <p className={`mic-status ${statusClass}`} aria-live="polite">
+                {statusText}
+              </p>
+
+              <p style={{ fontSize: "var(--text-xs)", color: "var(--clr-text-3)", marginTop: "-0.5rem" }}>
+                Model: {openaiModel}
+              </p>
             </div>
+          ) : (
+            /* ── Text input panel ── */
+            <div className="mic-section" style={{ width: "100%", maxWidth: 480, padding: "0 1rem" }}>
+              <div style={{
+                display:       "flex",
+                flexDirection: "column",
+                alignItems:    "center",
+                gap:           "1rem",
+                width:         "100%",
+              }}>
+                {/* Big keyboard tap-target */}
+                <button
+                  id="keyboard-open-btn"
+                  className="mic-btn"
+                  onClick={() => textInputRef.current?.focus()}
+                  disabled={isSubmitting || voiceState === "SPEAKING"}
+                  aria-label="Open keyboard"
+                  title="Tap to open keyboard"
+                  style={{ fontSize: "2rem" }}
+                >
+                  ⌨️
+                </button>
+                <p className="mic-status" aria-live="polite">
+                  {isSubmitting ? "Processing…" : voiceState === "SPEAKING" ? "Speaking…" : "Tap to type"}
+                </p>
 
-            <p className={`mic-status ${statusClass}`} aria-live="polite">
-              {statusText}
-            </p>
+                {/* Text input + send */}
+                <form
+                  onSubmit={e => { e.preventDefault(); processText(textInput); }}
+                  style={{ display: "flex", gap: "0.5rem", width: "100%" }}
+                >
+                  <textarea
+                    ref={textInputRef}
+                    id="text-input"
+                    className="form-input"
+                    rows={2}
+                    placeholder={pendingState ? `Category for "${pendingState.item_name}"…` : "Type your statement or question…"}
+                    value={textInput}
+                    onChange={e => setTextInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        processText(textInput);
+                      }
+                    }}
+                    disabled={isSubmitting || voiceState === "SPEAKING"}
+                    style={{ flex: 1, resize: "none" }}
+                  />
+                  <button
+                    id="text-send-btn"
+                    type="submit"
+                    className="btn btn--primary"
+                    disabled={!textInput.trim() || isSubmitting || voiceState === "SPEAKING"}
+                    style={{ alignSelf: "stretch", padding: "0 1.25rem" }}
+                  >
+                    {isSubmitting ? <span className="spinner" /> : "➤"}
+                  </button>
+                </form>
 
-            {/* Model indicator */}
-            <p style={{
-              fontSize:  "var(--text-xs)",
-              color:     "var(--clr-text-3)",
-              marginTop: "-0.5rem",
-            }}>
-              Model: {openaiModel}
-            </p>
-          </div>
+                <p style={{ fontSize: "var(--text-xs)", color: "var(--clr-text-3)" }}>
+                  Press Enter or ➤ to submit · Shift+Enter for new line
+                </p>
+              </div>
+            </div>
+          )}
         </section>
       </main>
 
