@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo, Fragment } from "react";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { logger } from "@/lib/logger";
-import { VERSION_LABEL } from "@/lib/version";
+import { VERSION_LABEL, APP_VERSION } from "@/lib/version";
 import type { User, Session } from "@supabase/supabase-js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -286,6 +286,9 @@ function SettingsModal({
   currentModel,
   currentCustomPrompt,
   currentMinMatchScore,
+  deferredPrompt,
+  isStandalone,
+  onInstallApp,
   onSave,
   onClose,
 }: {
@@ -293,14 +296,19 @@ function SettingsModal({
   currentModel:         string;
   currentCustomPrompt:  string | null;
   currentMinMatchScore: number;
+  deferredPrompt:       any;
+  isStandalone:         boolean;
+  onInstallApp:         () => void;
   onSave: (model: string, customPrompt: string | null, minMatchScore: number) => void;
   onClose: () => void;
 }) {
-  const [model,        setModel]        = useState(currentModel);
-  const [prompt,       setPrompt]       = useState(currentCustomPrompt ?? "");
-  const [scoreThresh,  setScoreThresh]  = useState(Math.round(currentMinMatchScore * 100));
-  const [saving,       setSaving]       = useState(false);
-  const [saved,        setSaved]        = useState(false);
+  const [model,           setModel]           = useState(currentModel);
+  const [prompt,          setPrompt]          = useState(currentCustomPrompt ?? "");
+  const [scoreThresh,     setScoreThresh]     = useState(Math.round(currentMinMatchScore * 100));
+  const [saving,          setSaving]          = useState(false);
+  const [saved,           setSaved]           = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateStatus,    setUpdateStatus]    = useState<string | null>(null);
   const supabase = getSupabaseClient();
 
   async function handleSave() {
@@ -386,6 +394,108 @@ function SettingsModal({
           <p style={{ fontSize: "0.75rem", color: "var(--clr-text-3)", marginTop: "0.25rem" }}>
             Advanced: override the system prompt sent to the AI. Clear to restore the default.
           </p>
+        </div>
+
+        {/* ── PWA Installation Section ── */}
+        <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.08)", margin: "1.25rem 0 1rem" }} />
+        <div className="form-group">
+          <label className="form-label">📱 App Installation (PWA)</label>
+          {isStandalone ? (
+            <div style={{ fontSize: "0.8rem", color: "#10b981", padding: "0.4rem 0.6rem", background: "rgba(16, 185, 129, 0.1)", borderRadius: "6px" }}>
+              ✓ App is installed &amp; running in standalone mode.
+            </div>
+          ) : deferredPrompt ? (
+            <button
+              id="settings-install-pwa"
+              type="button"
+              className="btn btn--primary"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem" }}
+              onClick={onInstallApp}
+            >
+              📲 Install App to Home Screen
+            </button>
+          ) : (
+            <p style={{ fontSize: "0.75rem", color: "var(--clr-text-3)" }}>
+              Install prompt is managed by your browser. If available, an 📲 Install icon appears in the top header toolbar.
+            </p>
+          )}
+        </div>
+
+        {/* ── Check for Updates Section ── */}
+        <div className="form-group">
+          <label className="form-label">🔄 App Version &amp; Updates</label>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: "0.8rem", color: "var(--clr-text-2)" }}>Running version: <strong>v{APP_VERSION}</strong></span>
+            <button
+              id="check-updates-btn"
+              type="button"
+              className="btn btn--ghost"
+              style={{ fontSize: "0.8rem", padding: "0.35rem 0.75rem" }}
+              onClick={async () => {
+                setCheckingUpdates(true);
+                setUpdateStatus("Checking for updates...");
+                try {
+                  if (!("serviceWorker" in navigator)) {
+                    setUpdateStatus("Service worker not supported on this browser.");
+                    return;
+                  }
+                  const reg = await navigator.serviceWorker.getRegistration();
+                  if (!reg) {
+                    setUpdateStatus("No active service worker found.");
+                    return;
+                  }
+
+                  // Force SW update check
+                  await reg.update();
+
+                  if (reg.waiting) {
+                    setUpdateStatus("New version found! Updating app...");
+                    reg.waiting.postMessage({ type: "SKIP_WAITING" });
+                    setTimeout(() => window.location.reload(), 600);
+                    return;
+                  }
+
+                  if (reg.installing) {
+                    setUpdateStatus("Downloading new update...");
+                    reg.installing.addEventListener("statechange", function () {
+                      if (this.state === "installed") {
+                        setUpdateStatus("Update installed! Reloading app...");
+                        setTimeout(() => window.location.reload(), 600);
+                      }
+                    });
+                    return;
+                  }
+
+                  // Direct check of sw.js on server
+                  const swRes = await fetch(`/sw.js?t=${Date.now()}`);
+                  if (swRes.ok) {
+                    const text = await swRes.text();
+                    const match = text.match(/const APP_VERSION = "([^"]+)";/);
+                    if (match && match[1] !== APP_VERSION) {
+                      setUpdateStatus(`New version v${match[1]} available on server! Reloading...`);
+                      setTimeout(() => window.location.reload(), 800);
+                      return;
+                    }
+                  }
+
+                  setUpdateStatus(`You are running the latest version (v${APP_VERSION}).`);
+                } catch (err) {
+                  console.warn("Update check error:", err);
+                  setUpdateStatus("Error checking for updates.");
+                } finally {
+                  setCheckingUpdates(false);
+                }
+              }}
+              disabled={checkingUpdates}
+            >
+              {checkingUpdates ? <span className="spinner" /> : "🔄 Check for Updates"}
+            </button>
+          </div>
+          {updateStatus && (
+            <p style={{ fontSize: "0.8rem", color: updateStatus.includes("Error") || updateStatus.includes("failed") ? "#ef4444" : "#10b981", marginTop: "0.5rem" }}>
+              {updateStatus}
+            </p>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: "0.75rem" }}>
@@ -513,6 +623,8 @@ export default function HomePage() {
   const [showCost,      setShowCost]      = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<ItemResult[]>([]);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isStandalone,   setIsStandalone]   = useState(false);
   const [isOnline,      setIsOnline]      = useState(true);
   const [inputMode,     setInputMode]     = useState<InputMode>("voice");
   const [textInput,     setTextInput]     = useState("");
@@ -532,8 +644,29 @@ export default function HomePage() {
   const logRef            = useRef<HTMLDivElement>(null);
   const streamRef         = useRef<MediaStream | null>(null);
 
-  // ─── Auth init ────────────────────────────────────────────────────────────
+  // ─── PWA & Auth init ────────────────────────────────────────────────────────
   useEffect(() => {
+    // Check if app is running in standalone PWA mode
+    const isStandaloneMode =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (navigator as any).standalone === true;
+    setIsStandalone(isStandaloneMode);
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      logger.info("PWA", "beforeinstallprompt captured");
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
+      logger.info("PWA", "App installed successfully");
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
@@ -547,9 +680,24 @@ export default function HomePage() {
       if (s?.user) loadUserSettings(s.user.id);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      subscription.unsubscribe();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleInstallApp = useCallback(async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    logger.info("PWA", "User install prompt outcome", { outcome });
+    if (outcome === "accepted") {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
+    }
+  }, [deferredPrompt]);
 
   // ─── Load user settings ───────────────────────────────────────────────────
   async function loadUserSettings(uid: string) {
@@ -937,6 +1085,17 @@ export default function HomePage() {
           >
             📦
           </button>
+          {deferredPrompt && (
+            <button
+              id="install-pwa-btn"
+              className="btn btn--ghost btn--icon"
+              onClick={handleInstallApp}
+              aria-label="Install App as PWA"
+              title="Install App as PWA on Mobile / Desktop"
+            >
+              📲
+            </button>
+          )}
           <button
             id="settings-btn"
             className="btn btn--ghost btn--icon"
@@ -1223,6 +1382,9 @@ export default function HomePage() {
           currentModel={openaiModel}
           currentCustomPrompt={customPrompt}
           currentMinMatchScore={minMatchScore}
+          deferredPrompt={deferredPrompt}
+          isStandalone={isStandalone}
+          onInstallApp={handleInstallApp}
           onSave={(m, p, s) => {
             setOpenaiModel(m);
             setCustomPrompt(p);

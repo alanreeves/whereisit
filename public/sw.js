@@ -30,7 +30,7 @@
 
 // ─── Version ──────────────────────────────────────────────────────────────────
 // Keep this in sync with lib/version.ts  ↓
-const APP_VERSION = "1.6.6";
+const APP_VERSION = "1.6.7";
 
 // ─── Cache key constants ───────────────────────────────────────────────────────
 const CURRENT_CACHE_PREFIX = `where-is-it-v${APP_VERSION}`;
