@@ -1361,8 +1361,7 @@ export default function HomePage() {
         }}>
           🤖 AI Usage: {aiUsageStats ? (
             <>
-              <strong>{aiUsageStats.model}</strong>
-              {aiUsageStats.action ? ` • ${aiUsageStats.action}` : ""}
+              {aiUsageStats.action ? <strong>{aiUsageStats.action}</strong> : ""}
               {aiUsageStats.tokens ? ` • ${aiUsageStats.tokens.toLocaleString()} tokens` : ""}
               {aiUsageStats.cost != null && aiUsageStats.cost > 0
                 ? ` • ~$${aiUsageStats.cost.toFixed(6)}`
@@ -1370,7 +1369,7 @@ export default function HomePage() {
               {aiUsageStats.elapsedMs ? ` • ${aiUsageStats.elapsedMs}ms` : ""}
             </>
           ) : (
-            `Ready (${openaiModel})`
+            "Ready"
           )}
         </div>
       </footer>
