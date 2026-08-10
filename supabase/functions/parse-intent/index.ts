@@ -22,21 +22,25 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL          = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENAI_API_URL        = "https://api.openai.com/v1";
-const DEFAULT_MODEL         = "gpt-5.6-luna";
+const DEFAULT_MODEL         = "gpt-5.4-nano";
 const EMBEDDING_MODEL       = "text-embedding-3-small";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ActionType = "STORE" | "SEARCH" | "MOVE" | "REMOVE" | "PROVIDE_CATEGORY" | "LIST_CATEGORIES" | "UNKNOWN";
 
-// Default per-model rates (USD per 1,000 tokens) used when the user has not set custom rates.
+// Default per-model rates (USD per 1,000 tokens) — prices from OpenAI pricing page.
+// Per-1M prices divided by 1,000. Default model: gpt-5.4-nano.
 const DEFAULT_RATES: Record<string, { prompt: number; completion: number }> = {
-  "gpt-5.6-luna":        { prompt: 0.00015,  completion: 0.0006 },
-  "gpt-4o":              { prompt: 0.005,    completion: 0.015  },
-  "gpt-4o-mini":         { prompt: 0.00015,  completion: 0.0006 },
-  "gpt-4-turbo":         { prompt: 0.01,     completion: 0.03   },
-  "o1-mini":             { prompt: 0.003,    completion: 0.012  },
-  "o1-preview":          { prompt: 0.015,    completion: 0.060  },
-  "text-embedding-3-small": { prompt: 0.00002, completion: 0 },
+  "gpt-5.6-sol":             { prompt: 0.005,    completion: 0.030   },
+  "gpt-5.6-terra":           { prompt: 0.002,    completion: 0.012   },
+  "gpt-5.6-luna":            { prompt: 0.0002,   completion: 0.0012  },
+  "gpt-5.5":                 { prompt: 0.005,    completion: 0.030   },
+  "gpt-5.5-pro":             { prompt: 0.030,    completion: 0.180   },
+  "gpt-5.4":                 { prompt: 0.0025,   completion: 0.015   },
+  "gpt-5.4-mini":            { prompt: 0.00075,  completion: 0.0045  },
+  "gpt-5.4-nano":            { prompt: 0.0002,   completion: 0.00125 },
+  "gpt-5.4-pro":             { prompt: 0.030,    completion: 0.180   },
+  "text-embedding-3-small":  { prompt: 0.00002,  completion: 0       },
 };
 
 interface ParsedAction {

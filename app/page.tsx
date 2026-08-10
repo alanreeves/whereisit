@@ -82,12 +82,15 @@ interface ParseIntentResponse {
 
 // ─── Available OpenAI models ──────────────────────────────────────────────────
 const OPENAI_MODELS = [
-  { value: "gpt-5.6-luna",      label: "GPT-5.6 Luna (Default)" },
-  { value: "gpt-4o",            label: "GPT-4o" },
-  { value: "gpt-4o-mini",       label: "GPT-4o Mini (Fastest)" },
-  { value: "gpt-4-turbo",       label: "GPT-4 Turbo" },
-  { value: "o1-mini",           label: "o1 Mini (Reasoning)" },
-  { value: "o1-preview",        label: "o1 Preview (Advanced)" },
+  { value: "gpt-5.4-nano",   label: "GPT-5.4 Nano (Default — fastest)" },
+  { value: "gpt-5.4-mini",   label: "GPT-5.4 Mini" },
+  { value: "gpt-5.4",        label: "GPT-5.4" },
+  { value: "gpt-5.4-pro",    label: "GPT-5.4 Pro" },
+  { value: "gpt-5.5",        label: "GPT-5.5" },
+  { value: "gpt-5.5-pro",    label: "GPT-5.5 Pro" },
+  { value: "gpt-5.6-luna",   label: "GPT-5.6 Luna" },
+  { value: "gpt-5.6-terra",  label: "GPT-5.6 Terra" },
+  { value: "gpt-5.6-sol",    label: "GPT-5.6 Sol (most powerful)" },
 ];
 
 // ─── Category emoji map ───────────────────────────────────────────────────────
@@ -501,7 +504,7 @@ export default function HomePage() {
   const [messages,      setMessages]      = useState<Message[]>([]);
   const [results,       setResults]       = useState<ItemResult[]>([]);
   const [pendingState,  setPendingState]  = useState<PendingState | null>(null);
-  const [openaiModel,   setOpenaiModel]   = useState<string>("gpt-5.6-luna");
+  const [openaiModel,   setOpenaiModel]   = useState<string>("gpt-5.4-nano");
   const [customPrompt,  setCustomPrompt]  = useState<string | null>(null);  // null = use server default
   const [minMatchScore, setMinMatchScore] = useState<number>(0.5);  // 50% default
   const [showSettings,  setShowSettings]  = useState(false);
@@ -1226,13 +1229,17 @@ export default function HomePage() {
 // COST & RATES MODAL
 // =============================================================================
 const MODEL_RATE_ROWS = [
-  { model: "gpt-5.6-luna",           label: "GPT-5.6 Luna (Default)",  prompt: 0.00015, completion: 0.0006  },
-  { model: "gpt-4o",                 label: "GPT-4o",                   prompt: 0.005,   completion: 0.015   },
-  { model: "gpt-4o-mini",            label: "GPT-4o Mini",              prompt: 0.00015, completion: 0.0006  },
-  { model: "gpt-4-turbo",            label: "GPT-4 Turbo",              prompt: 0.01,    completion: 0.03    },
-  { model: "o1-mini",                label: "o1 Mini",                  prompt: 0.003,   completion: 0.012   },
-  { model: "o1-preview",             label: "o1 Preview",               prompt: 0.015,   completion: 0.060   },
-  { model: "text-embedding-3-small", label: "Embedding 3 Small",        prompt: 0.00002, completion: 0       },
+  // Prices from OpenAI pricing page — USD per 1,000 tokens (per-1M ÷ 1000)
+  { model: "gpt-5.4-nano",           label: "GPT-5.4 Nano (Default)",   prompt: 0.0002,   completion: 0.00125 },
+  { model: "gpt-5.4-mini",           label: "GPT-5.4 Mini",             prompt: 0.00075,  completion: 0.0045  },
+  { model: "gpt-5.4",                label: "GPT-5.4",                  prompt: 0.0025,   completion: 0.015   },
+  { model: "gpt-5.4-pro",            label: "GPT-5.4 Pro",              prompt: 0.030,    completion: 0.180   },
+  { model: "gpt-5.5",                label: "GPT-5.5",                  prompt: 0.005,    completion: 0.030   },
+  { model: "gpt-5.5-pro",            label: "GPT-5.5 Pro",              prompt: 0.030,    completion: 0.180   },
+  { model: "gpt-5.6-luna",           label: "GPT-5.6 Luna",             prompt: 0.0002,   completion: 0.0012  },
+  { model: "gpt-5.6-terra",          label: "GPT-5.6 Terra",            prompt: 0.002,    completion: 0.012   },
+  { model: "gpt-5.6-sol",            label: "GPT-5.6 Sol",              prompt: 0.005,    completion: 0.030   },
+  { model: "text-embedding-3-small", label: "Embedding 3 Small",        prompt: 0.00002,  completion: 0       },
 ];
 
 function CostModal({ userId, onClose }: { userId: string; onClose: () => void }) {

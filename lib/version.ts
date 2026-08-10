@@ -17,7 +17,7 @@
  *   - Increment MAJOR/MINOR only when significant major features are added.
  */
 
-export const APP_VERSION = "1.6.4" as const;
+export const APP_VERSION = "1.6.5" as const;
 
 /**
  * The full cache-key prefix used by the Service Worker.
