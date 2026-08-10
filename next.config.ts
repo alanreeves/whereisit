@@ -1,24 +1,34 @@
 import type { NextConfig } from "next";
 
+const isProd = process.env.NODE_ENV === "production";
+
 const nextConfig: NextConfig = {
-  // Serve Service Worker from root with correct headers
-  headers: async () => [
-    {
-      source: "/sw.js",
-      headers: [
-        { key: "Cache-Control",  value: "no-cache, no-store, must-revalidate" },
-        { key: "Service-Worker-Allowed", value: "/" },
-        { key: "Content-Type",   value: "application/javascript; charset=utf-8" },
-      ],
-    },
-    {
-      source: "/manifest.json",
-      headers: [
-        { key: "Content-Type", value: "application/manifest+json" },
-        { key: "Cache-Control", value: "public, max-age=3600" },
-      ],
-    },
-  ],
+  /**
+   * Static export for GitHub Pages.
+   * All API calls go to Supabase Edge Functions — no Next.js server needed.
+   */
+  output: "export",
+
+  /**
+   * GitHub Pages serves the site at:
+   *   https://alanreeves.github.io/whereisit/
+   * so we need the /whereisit base path.
+   * Override with NEXT_PUBLIC_BASE_PATH='' if you add a custom domain.
+   */
+  basePath: process.env.NEXT_PUBLIC_BASE_PATH ?? (isProd ? "/whereisit" : ""),
+
+  /**
+   * Next.js image optimisation requires a server — disable for static export.
+   */
+  images: {
+    unoptimized: true,
+  },
+
+  /**
+   * Trailing slash makes GitHub Pages routing work correctly.
+   * /about  →  /about/index.html
+   */
+  trailingSlash: true,
 };
 
 export default nextConfig;
